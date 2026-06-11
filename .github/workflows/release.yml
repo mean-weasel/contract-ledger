@@ -19,7 +19,6 @@ jobs:
   publish-npm:
     name: Publish to npm with provenance
     runs-on: ubuntu-latest
-    environment: npm-production
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.confirm_publish == 'publish-npm')
     steps:
       - name: Checkout
