@@ -60,6 +60,18 @@ function getInvocationArgv(deps: ProgramDeps, program: Command): string[] {
   return deps.argv ?? program.args;
 }
 
+function hasChildCommandSeparator(argv: string[], subcommand: string): boolean {
+  const commandIndex = argv.indexOf(subcommand);
+
+  return commandIndex >= 0 && argv.indexOf('--', commandIndex + 1) >= 0;
+}
+
+function assertChildCommandSeparator(argv: string[], subcommand: string, usage: string): void {
+  if (!hasChildCommandSeparator(argv, subcommand)) {
+    throw new Error(`${subcommand} requires "--" before the child command: ${usage}`);
+  }
+}
+
 function parseStatus(status: string): ReceiptStatus {
   if (status === 'pass' || status === 'fail' || status === 'inconclusive') {
     return status;
@@ -329,21 +341,28 @@ export function createProgram(deps: ProgramDeps = {}): Command {
   program
     .command('verifier-add-command')
     .description('Add a command verifier')
+    .allowUnknownOption(true)
     .argument('<contractId>')
     .argument('<name>')
     .argument('<command...>')
     .action(
       async (contractId: string, name: string, commandArgs: string[], command: Command) => {
+        const argv = getInvocationArgv(deps, program);
         await audited(
           {
             cwd,
             actor,
-            argv: getInvocationArgv(deps, program),
+            argv,
             subcommand: 'verifier-add-command',
             scopeType: 'contract',
             scopeId: contractId,
           },
           () => {
+            assertChildCommandSeparator(
+              argv,
+              'verifier-add-command',
+              'verifier-add-command <contractId> <name> -- <command...>',
+            );
             const verifier = usingLedger(cwd, (ledger) =>
               addVerifier(ledger, {
                 contractId,
@@ -532,19 +551,26 @@ export function createProgram(deps: ProgramDeps = {}): Command {
   program
     .command('receipt-run')
     .description('Run a command and record its receipt')
+    .allowUnknownOption(true)
     .argument('<contractId>')
     .argument('<command...>')
     .action(async (contractId: string, commandArgs: string[], command: Command) => {
+      const argv = getInvocationArgv(deps, program);
       await audited(
         {
           cwd,
           actor,
-          argv: getInvocationArgv(deps, program),
+          argv,
           subcommand: 'receipt-run',
           scopeType: 'contract',
           scopeId: contractId,
         },
         async () => {
+          assertChildCommandSeparator(
+            argv,
+            'receipt-run',
+            'receipt-run <contractId> -- <command...>',
+          );
           const [bin, ...args] = commandArgs;
           if (bin === undefined) {
             throw new Error('receipt-run requires a command');
@@ -579,7 +605,13 @@ export function createProgram(deps: ProgramDeps = {}): Command {
         },
         () => {
           const result = usingLedger(cwd, (ledger) => closeContract(ledger, { contractId, actor }));
-          emit(result.ok ? `${contractId} closed` : `blocked: ${result.problems.join('; ')}`);
+          if (!result.ok) {
+            const message = `blocked: ${result.problems.join('; ')}`;
+            emit(message);
+            throw new Error(message);
+          }
+
+          emit(`${contractId} closed`);
         },
       );
     });

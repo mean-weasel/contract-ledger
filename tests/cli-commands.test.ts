@@ -294,4 +294,258 @@ describe('CLI commands', () => {
       });
     });
   });
+
+  it('blocked closeout records a failed invocation and no success completion', async () => {
+    await withTempWorkspace(async (root) => {
+      const stdout: string[] = [];
+
+      await runCli({
+        cwd: root,
+        argv: ['init', 'Blocked close', '--intent', 'Check close gates', '--scope', 'CLI tests'],
+        stdout,
+      });
+      const contractId = stdout.at(-1)?.trim();
+      expect(contractId).toMatch(/^ctr_/);
+
+      await runCli({
+        cwd: root,
+        argv: ['accept', contractId ?? 'missing'],
+        stdout,
+      });
+      await runCli({
+        cwd: root,
+        argv: [
+          'criteria-add',
+          contractId ?? 'missing',
+          'This criterion remains pending.',
+          '--requires',
+          'manual',
+        ],
+        stdout,
+      });
+
+      await expect(
+        runCli({
+          cwd: root,
+          argv: ['close', contractId ?? 'missing'],
+          stdout,
+        }),
+      ).rejects.toThrow(/blocked: Pending criteria/);
+      expect(stdout.at(-1)).toMatch(/blocked: Pending criteria/);
+
+      withLedger(root, (ledger) => {
+        const invocation = ledger.db
+          .prepare(
+            `
+            select id, status, exit_code
+            from command_invocations
+            where subcommand = 'close'
+          `,
+          )
+          .get() as { id: string; status: string; exit_code: number };
+        const completion = ledger.db
+          .prepare(
+            `
+            select payload_json
+            from events
+            where command_invocation_id = ?
+              and event_type = 'cli_completed'
+          `,
+          )
+          .get(invocation.id) as { payload_json: string };
+        const successCount = ledger.db
+          .prepare(
+            `
+            select count(*) as count
+            from events
+            where command_invocation_id = ?
+              and event_type = 'cli_completed'
+              and json_extract(payload_json, '$.status') = 'ok'
+          `,
+          )
+          .get(invocation.id) as { count: number };
+        const closedEvents = ledger.db
+          .prepare(
+            `
+            select count(*) as count
+            from events
+            where contract_id = ?
+              and event_type = 'contract_closed'
+          `,
+          )
+          .get(contractId) as { count: number };
+
+        expect(invocation).toMatchObject({
+          status: 'failed',
+          exit_code: 1,
+        });
+        expect(JSON.parse(completion.payload_json)).toMatchObject({
+          status: 'failed',
+          exitCode: 1,
+        });
+        expect(successCount.count).toBe(0);
+        expect(closedEvents.count).toBe(0);
+      });
+    });
+  });
+
+  it('receipt-run executes child commands with flags after the separator', async () => {
+    await withTempWorkspace(async (root) => {
+      const stdout: string[] = [];
+
+      await runCli({
+        cwd: root,
+        argv: [
+          'init',
+          'Receipt command',
+          '--intent',
+          'Run a child command',
+          '--scope',
+          'CLI tests',
+        ],
+        stdout,
+      });
+      const contractId = stdout.at(-1)?.trim();
+      expect(contractId).toMatch(/^ctr_/);
+
+      await runCli({
+        cwd: root,
+        argv: ['receipt-run', contractId ?? 'missing', '--', process.execPath, '-e', "console.log('proof')"],
+        stdout,
+      });
+      const [receiptId, status] = stdout.at(-1)?.split(' ') ?? [];
+
+      withLedger(root, (ledger) => {
+        const receipt = ledger.db
+          .prepare(
+            `
+            select id, status, command, stdout_excerpt
+            from receipts
+            where id = ?
+          `,
+          )
+          .get(receiptId) as
+          | {
+              id: string;
+              status: string;
+              command: string;
+              stdout_excerpt: string;
+            }
+          | undefined;
+        const invocation = ledger.db
+          .prepare(
+            `
+            select status, exit_code
+            from command_invocations
+            where subcommand = 'receipt-run'
+          `,
+          )
+          .get() as { status: string; exit_code: number };
+
+        expect(status).toBe('pass');
+        expect(receipt?.status).toBe('pass');
+        expect(receipt?.command).toContain(`${process.execPath} -e`);
+        expect(receipt?.stdout_excerpt).toContain('proof');
+        expect(invocation).toEqual({ status: 'ok', exit_code: 0 });
+      });
+    });
+  });
+
+  it('receipt-run without a child command separator is audited as a failed command', async () => {
+    await withTempWorkspace(async (root) => {
+      const stdout: string[] = [];
+
+      await runCli({
+        cwd: root,
+        argv: [
+          'init',
+          'Missing separator',
+          '--intent',
+          'Check receipt-run errors',
+          '--scope',
+          'CLI tests',
+        ],
+        stdout,
+      });
+      const contractId = stdout.at(-1)?.trim();
+      expect(contractId).toMatch(/^ctr_/);
+
+      await expect(
+        runCli({
+          cwd: root,
+          argv: ['receipt-run', contractId ?? 'missing', process.execPath, '-e', "console.log('proof')"],
+          stdout,
+        }),
+      ).rejects.toThrow('receipt-run requires "--" before the child command');
+
+      withLedger(root, (ledger) => {
+        const invocation = ledger.db
+          .prepare(
+            `
+            select id, status, exit_code
+            from command_invocations
+            where subcommand = 'receipt-run'
+          `,
+          )
+          .get() as { id: string; status: string; exit_code: number };
+        const completion = ledger.db
+          .prepare(
+            `
+            select payload_json
+            from events
+            where command_invocation_id = ?
+              and event_type = 'cli_completed'
+          `,
+          )
+          .get(invocation.id) as { payload_json: string };
+
+        expect(invocation).toMatchObject({ status: 'failed', exit_code: 1 });
+        expect(JSON.parse(completion.payload_json)).toMatchObject({
+          status: 'failed',
+          error:
+            'receipt-run requires "--" before the child command: receipt-run <contractId> -- <command...>',
+        });
+      });
+    });
+  });
+
+  it('verifier-add-command preserves child command separators after the pass-through marker', async () => {
+    await withTempWorkspace(async (root) => {
+      const stdout: string[] = [];
+
+      await runCli({
+        cwd: root,
+        argv: ['init', 'Verifier command', '--intent', 'Store verifier', '--scope', 'CLI tests'],
+        stdout,
+      });
+      const contractId = stdout.at(-1)?.trim();
+      expect(contractId).toMatch(/^ctr_/);
+
+      await runCli({
+        cwd: root,
+        argv: [
+          'verifier-add-command',
+          contractId ?? 'missing',
+          'billing-tests',
+          '--',
+          'npm',
+          'test',
+          '--',
+          'billing',
+        ],
+        stdout,
+      });
+      const verifierId = stdout.at(-1)?.trim();
+
+      withLedger(root, (ledger) => {
+        const verifier = ledger.db
+          .prepare('select config_json from verifiers where id = ?')
+          .get(verifierId) as { config_json: string } | undefined;
+
+        expect(JSON.parse(verifier?.config_json ?? '{}')).toEqual({
+          command: 'npm test -- billing',
+        });
+      });
+    });
+  });
 });

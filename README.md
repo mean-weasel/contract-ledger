@@ -19,13 +19,18 @@ npm run dev -- init "Fix billing settings regression" --intent "Canceled users c
 npm run dev -- accept ctr_xxx
 npm run dev -- criteria-add ctr_xxx "Canceled users cannot access premium export" --requires command
 npm run dev -- todo-add ctr_xxx "Verify premium export is hidden"
-npm run dev -- verifier-add-command ctr_xxx billing-tests npm test -- billing
+npm run dev -- verifier-add-command ctr_xxx billing-tests -- npm test -- billing
 npm run dev -- failure-modes-add ctr_xxx "Tests pass but browser state fails" --why "No browser proof exists" --check "Run a smoke check"
 npm run dev -- receipt-add ctr_xxx --summary "Reviewed command output and browser state" --status pass
-npm run dev -- receipt-run ctr_xxx node -e "console.log('proof')"
+npm run dev -- receipt-run ctr_xxx -- node -e "console.log('proof')"
 npm run dev -- export ctr_xxx
 npm run dev -- close ctr_xxx
 ```
+
+Use `--` before child commands for `receipt-run` and
+`verifier-add-command`. That pass-through marker keeps child flags such as
+`node -e` or nested separators such as `npm test -- billing` attached to the
+child command instead of being parsed as Contract Ledger options.
 
 Read-only helpers:
 
