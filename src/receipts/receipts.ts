@@ -153,6 +153,10 @@ function commandText(command: string, args: string[]): string {
   return [command, ...args].join(' ');
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function runCommand(input: { cwd: string; command: string; args: string[] }): Promise<CommandResult> {
   return await new Promise((resolve) => {
     const child = spawn(input.command, input.args, {
@@ -408,6 +412,8 @@ export async function runCommandReceipt(
   const args = input.args ?? [];
   const command = commandText(input.command, args);
 
+  stringifyAdapterMetadata(input.adapterMetadata);
+
   recordEvent(ledger, {
     contractId: input.contractId,
     scopeType: 'verifier',
@@ -427,23 +433,43 @@ export async function runCommandReceipt(
     args,
   });
   const status: ReceiptStatus = result.exitCode === 0 ? 'pass' : 'fail';
-  const receipt = addReceipt(ledger, {
-    contractId: input.contractId,
-    criterionId: input.criterionId,
-    verifierId: input.verifierId,
-    todoId: input.todoId,
-    failureModeId: input.failureModeId,
-    kind: 'command',
-    status,
-    summary: input.summary ?? `Command exited ${result.exitCode}`,
-    command,
-    exitCode: result.exitCode,
-    stdoutExcerpt: result.stdoutExcerpt,
-    stderrExcerpt: result.stderrExcerpt,
-    adapterMetadata: input.adapterMetadata,
-    actor: input.actor,
-    clock,
-  });
+  let receipt: ReceiptRecord;
+
+  try {
+    receipt = addReceipt(ledger, {
+      contractId: input.contractId,
+      criterionId: input.criterionId,
+      verifierId: input.verifierId,
+      todoId: input.todoId,
+      failureModeId: input.failureModeId,
+      kind: 'command',
+      status,
+      summary: input.summary ?? `Command exited ${result.exitCode}`,
+      command,
+      exitCode: result.exitCode,
+      stdoutExcerpt: result.stdoutExcerpt,
+      stderrExcerpt: result.stderrExcerpt,
+      adapterMetadata: input.adapterMetadata,
+      actor: input.actor,
+      clock,
+    });
+  } catch (error) {
+    recordEvent(ledger, {
+      contractId: input.contractId,
+      scopeType: 'verifier',
+      scopeId: input.verifierId ?? input.contractId,
+      actor: input.actor,
+      eventType: 'verifier_run_failed',
+      payload: {
+        verifierId: input.verifierId ?? null,
+        exitCode: result.exitCode,
+        status: 'fail',
+        errorMessage: errorMessage(error),
+      },
+      clock,
+    });
+    throw error;
+  }
 
   recordEvent(ledger, {
     contractId: input.contractId,

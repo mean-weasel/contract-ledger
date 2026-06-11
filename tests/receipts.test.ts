@@ -49,6 +49,27 @@ function eventTypes(ledger: ReturnType<typeof openLedger>, contractId: string): 
   return rows.map((row) => row.event_type);
 }
 
+function eventsForContract(
+  ledger: ReturnType<typeof openLedger>,
+  contractId: string,
+): Array<{ eventType: string; payload: Record<string, unknown> }> {
+  const rows = ledger.db
+    .prepare(
+      `
+      select event_type, payload_json
+      from events
+      where contract_id = ?
+      order by created_at, rowid
+    `,
+    )
+    .all(contractId) as Array<{ event_type: string; payload_json: string }>;
+
+  return rows.map((row) => ({
+    eventType: row.event_type,
+    payload: JSON.parse(row.payload_json) as Record<string, unknown>,
+  }));
+}
+
 function makeContractEvidence(ledger: ReturnType<typeof openLedger>) {
   const contract = createContract(ledger, {
     title: 'Receipt contract',
@@ -436,6 +457,77 @@ describe('receipts', () => {
           stderr_excerpt: 'bad command',
         });
         expect(eventTypes(ledger, contract.id)).toContain('verifier_run_failed');
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
+  it('rejects invalid command receipt adapter metadata before recording verifier_run_started', async () => {
+    await withTempWorkspace(async (root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const { contract, verifier } = makeContractEvidence(ledger);
+        const receiptCount = countRows(ledger, 'receipts');
+
+        await expect(
+          runCommandReceipt(ledger, {
+            contractId: contract.id,
+            verifierId: verifier.id,
+            command: process.execPath,
+            args: ['-e', 'process.stdout.write("should not run")'],
+            adapterMetadata: { dropped: undefined },
+            actor: 'test-agent',
+          }),
+        ).rejects.toThrow('adapterMetadata must be JSON-serializable without lossy values');
+
+        expect(countRows(ledger, 'receipts')).toBe(receiptCount);
+        expect(eventTypes(ledger, contract.id)).not.toContain('verifier_run_started');
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
+  it('records terminal verifier_run_failed when command receipt creation fails', async () => {
+    await withTempWorkspace(async (root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const first = makeContractEvidence(ledger);
+        const second = createContract(ledger, {
+          title: 'Second receipt contract',
+          createdBy: 'test-agent',
+        });
+        const receiptCount = countRows(ledger, 'receipts');
+
+        await expect(
+          runCommandReceipt(ledger, {
+            contractId: second.id,
+            criterionId: first.criterion.id,
+            command: process.execPath,
+            args: ['-e', 'process.stdout.write("receipt insert will fail")'],
+            actor: 'test-agent',
+          }),
+        ).rejects.toThrow();
+
+        expect(countRows(ledger, 'receipts')).toBe(receiptCount);
+
+        const verifierEvents = eventsForContract(ledger, second.id).filter((event) =>
+          event.eventType.startsWith('verifier_run_'),
+        );
+        expect(verifierEvents.map((event) => event.eventType)).toEqual([
+          'verifier_run_started',
+          'verifier_run_failed',
+        ]);
+        expect(verifierEvents[1]?.payload).toMatchObject({
+          verifierId: null,
+          exitCode: 0,
+          status: 'fail',
+        });
+        expect(verifierEvents[1]?.payload.receiptId).toBeUndefined();
+        expect(typeof verifierEvents[1]?.payload.errorMessage).toBe('string');
       } finally {
         ledger.close();
       }
