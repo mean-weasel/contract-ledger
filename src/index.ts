@@ -13,5 +13,6 @@ export {
   listFailureModes,
   resolveFailureMode,
 } from './failure-modes/failure-modes.js';
+export { addReceipt, attachArtifact, runCommandReceipt } from './receipts/receipts.js';
 export { addTodo } from './todos/todos.js';
 export { addVerifier, listAdapters, listProfiles } from './verifiers/verifiers.js';
