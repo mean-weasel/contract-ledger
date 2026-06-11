@@ -25,7 +25,7 @@ async function withTempWorkspace<T>(fn: (root: string) => T | Promise<T>): Promi
 }
 
 describe('ledger schema and audit', () => {
-  it('openLedger creates schema tables including contract and audit foundations', async () => {
+  it('openLedger creates all V1 schema tables', async () => {
     await withTempWorkspace((root) => {
       const ledger = openLedger({ cwd: root });
 
@@ -35,26 +35,47 @@ describe('ledger schema and audit', () => {
           .all() as Array<{ name: string }>;
         const tableNames = tables.map((row) => row.name);
 
-        expect(tableNames).toContain('contracts');
-        expect(tableNames).toContain('command_invocations');
-        expect(tableNames).toContain('events');
-        expect(tableNames).toContain('verifier_adapters');
+        expect(tableNames).toEqual(
+          expect.arrayContaining([
+            'schema_migrations',
+            'goals',
+            'contracts',
+            'amendments',
+            'criteria',
+            'verifier_adapters',
+            'acceptance_profiles',
+            'verifiers',
+            'todos',
+            'failure_modes',
+            'receipts',
+            'artifacts',
+            'receipt_artifacts',
+            'command_invocations',
+            'events',
+          ]),
+        );
       } finally {
         ledger.close();
       }
     });
   });
 
-  it('seed data includes the limner adapter', async () => {
+  it('seed data includes built-in adapters and acceptance profiles', async () => {
     await withTempWorkspace((root) => {
       const ledger = openLedger({ cwd: root });
 
       try {
-        const limner = ledger.db
-          .prepare('select name from verifier_adapters where name = ?')
-          .get('limner');
+        const adapters = ledger.db
+          .prepare('select name from verifier_adapters order by name')
+          .all() as Array<{ name: string }>;
+        const profiles = ledger.db
+          .prepare('select name from acceptance_profiles order by name')
+          .all() as Array<{ name: string }>;
 
-        expect(limner).toBeTruthy();
+        expect(adapters.map((adapter) => adapter.name)).toEqual(
+          expect.arrayContaining(['command', 'limner']),
+        );
+        expect(profiles.map((profile) => profile.name)).toContain('limner-visual-fidelity');
       } finally {
         ledger.close();
       }
@@ -195,6 +216,7 @@ describe('ledger schema and audit', () => {
       '--header=[REDACTED]',
     ]);
     expect(redactArgv(['-H=Authorization: Bearer live-secret'])).toEqual(['-H=[REDACTED]']);
+    expect(redactArgv(['Authorization: Bearer live-secret'])).toEqual(['[REDACTED]']);
     expect(redactArgv(['Cookie: session=abc123'])).toEqual(['[REDACTED]']);
   });
 
@@ -985,6 +1007,30 @@ describe('ledger schema and audit', () => {
             .prepare('select criterion_id from verifiers where id = ?')
             .get('ver_valid'),
         ).toEqual({ criterion_id: 'crit_a' });
+        expect(
+          ledger.db
+            .prepare('select linked_criterion_id from todos where id = ?')
+            .get('todo_valid'),
+        ).toEqual({ linked_criterion_id: 'crit_a' });
+        expect(
+          ledger.db
+            .prepare(
+              'select linked_criterion_id, expected_verifier_id from failure_modes where id = ?',
+            )
+            .get('fm_valid'),
+        ).toEqual({ linked_criterion_id: 'crit_a', expected_verifier_id: 'ver_for_fm' });
+        expect(
+          ledger.db
+            .prepare(
+              'select criterion_id, verifier_id, todo_id, disproof_attempt_id from receipts where id = ?',
+            )
+            .get('rec_valid'),
+        ).toEqual({
+          criterion_id: 'crit_a',
+          verifier_id: 'ver_valid',
+          todo_id: 'todo_valid',
+          disproof_attempt_id: 'fm_valid',
+        });
         expect(
           ledger.db
             .prepare('select criterion_id from verifiers where id = ?')
