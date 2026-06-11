@@ -157,6 +157,33 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function recordVerifierRunFailed(
+  ledger: Ledger,
+  input: {
+    contractId: string;
+    verifierId?: string;
+    actor: string;
+    exitCode?: number;
+    errorMessage?: string;
+    clock: Clock;
+  },
+): void {
+  recordEvent(ledger, {
+    contractId: input.contractId,
+    scopeType: 'verifier',
+    scopeId: input.verifierId ?? input.contractId,
+    actor: input.actor,
+    eventType: 'verifier_run_failed',
+    payload: {
+      verifierId: input.verifierId ?? null,
+      exitCode: input.exitCode ?? null,
+      status: 'fail',
+      ...(input.errorMessage === undefined ? {} : { errorMessage: input.errorMessage }),
+    },
+    clock: input.clock,
+  });
+}
+
 async function runCommand(input: { cwd: string; command: string; args: string[] }): Promise<CommandResult> {
   return await new Promise((resolve) => {
     const child = spawn(input.command, input.args, {
@@ -427,11 +454,25 @@ export async function runCommandReceipt(
     clock,
   });
 
-  const result = await runCommand({
-    cwd: ledger.cwd,
-    command: input.command,
-    args,
-  });
+  let result: CommandResult;
+
+  try {
+    result = await runCommand({
+      cwd: ledger.cwd,
+      command: input.command,
+      args,
+    });
+  } catch (error) {
+    recordVerifierRunFailed(ledger, {
+      contractId: input.contractId,
+      verifierId: input.verifierId,
+      actor: input.actor,
+      errorMessage: errorMessage(error),
+      clock,
+    });
+    throw error;
+  }
+
   const status: ReceiptStatus = result.exitCode === 0 ? 'pass' : 'fail';
   let receipt: ReceiptRecord;
 
@@ -454,18 +495,12 @@ export async function runCommandReceipt(
       clock,
     });
   } catch (error) {
-    recordEvent(ledger, {
+    recordVerifierRunFailed(ledger, {
       contractId: input.contractId,
-      scopeType: 'verifier',
-      scopeId: input.verifierId ?? input.contractId,
+      verifierId: input.verifierId,
       actor: input.actor,
-      eventType: 'verifier_run_failed',
-      payload: {
-        verifierId: input.verifierId ?? null,
-        exitCode: result.exitCode,
-        status: 'fail',
-        errorMessage: errorMessage(error),
-      },
+      exitCode: result.exitCode,
+      errorMessage: errorMessage(error),
       clock,
     });
     throw error;

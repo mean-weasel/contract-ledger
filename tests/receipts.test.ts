@@ -533,4 +533,42 @@ describe('receipts', () => {
       }
     });
   });
+
+  it('records terminal verifier_run_failed when command spawn throws synchronously', async () => {
+    await withTempWorkspace(async (root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const { contract, verifier } = makeContractEvidence(ledger);
+        const receiptCount = countRows(ledger, 'receipts');
+
+        await expect(
+          runCommandReceipt(ledger, {
+            contractId: contract.id,
+            verifierId: verifier.id,
+            command: '',
+            actor: 'test-agent',
+          }),
+        ).rejects.toThrow();
+
+        expect(countRows(ledger, 'receipts')).toBe(receiptCount);
+
+        const verifierEvents = eventsForContract(ledger, contract.id).filter((event) =>
+          event.eventType.startsWith('verifier_run_'),
+        );
+        expect(verifierEvents.map((event) => event.eventType)).toEqual([
+          'verifier_run_started',
+          'verifier_run_failed',
+        ]);
+        expect(verifierEvents[1]?.payload).toMatchObject({
+          verifierId: verifier.id,
+          status: 'fail',
+        });
+        expect(verifierEvents[1]?.payload.receiptId).toBeUndefined();
+        expect(typeof verifierEvents[1]?.payload.errorMessage).toBe('string');
+      } finally {
+        ledger.close();
+      }
+    });
+  });
 });
