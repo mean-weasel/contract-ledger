@@ -192,6 +192,11 @@ export function closeContract(ledger: Ledger, input: CloseContractInput): CloseC
   });
 
   const problems: string[] = [];
+
+  if (!['accepted', 'active'].includes(existing.status)) {
+    problems.push(`Contract must be accepted or active before closeout: ${existing.status}`);
+  }
+
   const openCriteria = ledger.db
     .prepare(
       `
@@ -207,6 +212,33 @@ export function closeContract(ledger: Ledger, input: CloseContractInput): CloseC
   if (openCriteria.length > 0) {
     const labels = openCriteria.map((criterion) => `${criterion.id} (${criterion.status})`);
     problems.push(`Pending criteria must be satisfied, deferred, or rejected: ${labels.join(', ')}`);
+  }
+
+  const weakTerminalCriteria = ledger.db
+    .prepare(
+      `
+      select id, status
+      from criteria
+      where contract_id = ?
+        and status in ('deferred', 'rejected')
+        and (
+          trim(coalesce(rationale, '')) = ''
+          or trim(coalesce(residual_risk, '')) = ''
+        )
+      order by created_at, rowid
+    `,
+    )
+    .all(input.contractId) as Array<{ id: string; status: string }>;
+
+  if (weakTerminalCriteria.length > 0) {
+    const labels = weakTerminalCriteria.map(
+      (criterion) => `${criterion.id} (${criterion.status})`,
+    );
+    problems.push(
+      `Deferred or rejected criteria require non-empty rationale and residual risk: ${labels.join(
+        ', ',
+      )}`,
+    );
   }
 
   const unprovedCriteria = ledger.db
@@ -232,6 +264,33 @@ export function closeContract(ledger: Ledger, input: CloseContractInput): CloseC
     problems.push(
       `Satisfied criteria missing a passing receipt: ${unprovedCriteria
         .map((criterion) => criterion.id)
+        .join(', ')}`,
+    );
+  }
+
+  const unprovedVerifiers = ledger.db
+    .prepare(
+      `
+      select id
+      from verifiers
+      where contract_id = ?
+        and required = 1
+        and not exists (
+          select 1
+          from receipts
+          where receipts.contract_id = verifiers.contract_id
+            and receipts.verifier_id = verifiers.id
+            and receipts.status = 'pass'
+        )
+      order by created_at, rowid
+    `,
+    )
+    .all(input.contractId) as Array<{ id: string }>;
+
+  if (unprovedVerifiers.length > 0) {
+    problems.push(
+      `Required verifiers missing a passing verifier receipt: ${unprovedVerifiers
+        .map((verifier) => verifier.id)
         .join(', ')}`,
     );
   }

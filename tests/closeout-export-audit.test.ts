@@ -5,9 +5,11 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  acceptContract,
   addCriterion,
   addFailureMode,
   addReceipt,
+  addVerifier,
   closeContract,
   createContract,
   exportContractMarkdown,
@@ -46,6 +48,32 @@ function satisfyCriterion(ledger: ReturnType<typeof openLedger>, criterionId: st
   ledger.db.prepare("update criteria set status = 'satisfied' where id = ?").run(criterionId);
 }
 
+function deferCriterion(
+  ledger: ReturnType<typeof openLedger>,
+  criterionId: string,
+  input?: {
+    rationale?: string;
+    residualRisk?: string;
+  },
+): void {
+  ledger.db
+    .prepare(
+      `
+      update criteria
+      set
+        status = 'deferred',
+        rationale = @rationale,
+        residual_risk = @residualRisk
+      where id = @id
+    `,
+    )
+    .run({
+      id: criterionId,
+      rationale: input?.rationale ?? null,
+      residualRisk: input?.residualRisk ?? null,
+    });
+}
+
 function artificiallyCloseContract(ledger: ReturnType<typeof openLedger>, contractId: string): void {
   ledger.db
     .prepare(
@@ -59,6 +87,31 @@ function artificiallyCloseContract(ledger: ReturnType<typeof openLedger>, contra
 }
 
 describe('closeout gates exports and audit reports', () => {
+  it('blocks draft contract closeout and records no contract_closed', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const contract = createContract(ledger, {
+          title: 'Draft closeout contract',
+          createdBy: 'test-agent',
+        });
+
+        const result = closeContract(ledger, {
+          contractId: contract.id,
+          actor: 'test-agent',
+        });
+
+        expect(result.ok).toBe(false);
+        expect(result.problems.join('\n')).toMatch(/accepted or active/i);
+        expect(eventTypes(ledger, contract.id)).toContain('closeout_attempted');
+        expect(eventTypes(ledger, contract.id)).not.toContain('contract_closed');
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
   it('blocks closeout when criteria are pending and mentions pending criteria', async () => {
     await withTempWorkspace((root) => {
       const ledger = openLedger({ cwd: root });
@@ -67,6 +120,10 @@ describe('closeout gates exports and audit reports', () => {
         const contract = createContract(ledger, {
           title: 'Pending criterion contract',
           createdBy: 'test-agent',
+        });
+        acceptContract(ledger, {
+          contractId: contract.id,
+          actor: 'test-agent',
         });
         addCriterion(ledger, {
           contractId: contract.id,
@@ -98,6 +155,10 @@ describe('closeout gates exports and audit reports', () => {
         const contract = createContract(ledger, {
           title: 'Missing passing receipt contract',
           createdBy: 'test-agent',
+        });
+        acceptContract(ledger, {
+          contractId: contract.id,
+          actor: 'test-agent',
         });
         const criterion = addCriterion(ledger, {
           contractId: contract.id,
@@ -137,6 +198,10 @@ describe('closeout gates exports and audit reports', () => {
         const contract = createContract(ledger, {
           title: 'Pending failure mode contract',
           createdBy: 'test-agent',
+        });
+        acceptContract(ledger, {
+          contractId: contract.id,
+          actor: 'test-agent',
         });
         const criterion = addCriterion(ledger, {
           contractId: contract.id,
@@ -188,6 +253,10 @@ describe('closeout gates exports and audit reports', () => {
           title: 'Clean closeout contract',
           createdBy: 'test-agent',
         });
+        acceptContract(ledger, {
+          contractId: contract.id,
+          actor: 'test-agent',
+        });
         const criterion = addCriterion(ledger, {
           contractId: contract.id,
           statement: 'Criterion has proof.',
@@ -232,6 +301,151 @@ describe('closeout gates exports and audit reports', () => {
     });
   });
 
+  it('blocks deferred or rejected criteria without rationale and residual risk', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const contract = createContract(ledger, {
+          title: 'Deferred criterion closeout contract',
+          createdBy: 'test-agent',
+        });
+        acceptContract(ledger, {
+          contractId: contract.id,
+          actor: 'test-agent',
+        });
+        const criterion = addCriterion(ledger, {
+          contractId: contract.id,
+          statement: 'Criterion is deferred.',
+          requiredEvidenceKind: 'manual',
+          actor: 'test-agent',
+        });
+        deferCriterion(ledger, criterion.id, {
+          rationale: '   ',
+          residualRisk: '',
+        });
+
+        const result = closeContract(ledger, {
+          contractId: contract.id,
+          actor: 'test-agent',
+        });
+
+        expect(result.ok).toBe(false);
+        expect(result.problems.join('\n')).toMatch(/rationale and residual risk/i);
+        expect(eventTypes(ledger, contract.id)).not.toContain('contract_closed');
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
+  it('blocks required verifiers without a passing verifier receipt', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const contract = createContract(ledger, {
+          title: 'Required verifier closeout contract',
+          createdBy: 'test-agent',
+        });
+        acceptContract(ledger, {
+          contractId: contract.id,
+          actor: 'test-agent',
+        });
+        const criterion = addCriterion(ledger, {
+          contractId: contract.id,
+          statement: 'Criterion has criterion proof only.',
+          requiredEvidenceKind: 'manual',
+          actor: 'test-agent',
+        });
+        satisfyCriterion(ledger, criterion.id);
+        const verifier = addVerifier(ledger, {
+          contractId: contract.id,
+          criterionId: criterion.id,
+          adapterId: 'adp_command_builtin',
+          name: 'Required command proof',
+          kind: 'command',
+          config: { command: 'node --version' },
+          required: true,
+          actor: 'test-agent',
+        });
+        addReceipt(ledger, {
+          contractId: contract.id,
+          criterionId: criterion.id,
+          kind: 'manual',
+          status: 'pass',
+          summary: 'Criterion proof passed but is not linked to verifier.',
+          actor: 'test-agent',
+        });
+
+        const result = closeContract(ledger, {
+          contractId: contract.id,
+          actor: 'test-agent',
+        });
+
+        expect(result.ok).toBe(false);
+        expect(result.problems.join('\n')).toMatch(/required verifiers/i);
+        expect(result.problems.join('\n')).toContain(verifier.id);
+        expect(eventTypes(ledger, contract.id)).not.toContain('contract_closed');
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
+  it('allows closeout when required verifier has a passing verifier receipt', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const contract = createContract(ledger, {
+          title: 'Required verifier proven contract',
+          createdBy: 'test-agent',
+        });
+        acceptContract(ledger, {
+          contractId: contract.id,
+          actor: 'test-agent',
+        });
+        const criterion = addCriterion(ledger, {
+          contractId: contract.id,
+          statement: 'Criterion has verifier proof.',
+          requiredEvidenceKind: 'command',
+          actor: 'test-agent',
+        });
+        satisfyCriterion(ledger, criterion.id);
+        const verifier = addVerifier(ledger, {
+          contractId: contract.id,
+          criterionId: criterion.id,
+          adapterId: 'adp_command_builtin',
+          name: 'Required command proof',
+          kind: 'command',
+          config: { command: 'node --version' },
+          required: true,
+          actor: 'test-agent',
+        });
+        addReceipt(ledger, {
+          contractId: contract.id,
+          criterionId: criterion.id,
+          verifierId: verifier.id,
+          kind: 'command',
+          status: 'pass',
+          summary: 'Verifier proof passed.',
+          actor: 'test-agent',
+        });
+
+        const result = closeContract(ledger, {
+          contractId: contract.id,
+          actor: 'test-agent',
+        });
+
+        expect(result).toEqual({ ok: true, problems: [] });
+        expect(eventTypes(ledger, contract.id)).toContain('contract_closed');
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
   it('successful close updates contract status to closed and records contract_closed', async () => {
     await withTempWorkspace((root) => {
       const ledger = openLedger({ cwd: root });
@@ -240,6 +454,10 @@ describe('closeout gates exports and audit reports', () => {
         const contract = createContract(ledger, {
           title: 'Status closeout contract',
           createdBy: 'test-agent',
+        });
+        acceptContract(ledger, {
+          contractId: contract.id,
+          actor: 'test-agent',
         });
 
         const result = closeContract(ledger, {
@@ -264,6 +482,10 @@ describe('closeout gates exports and audit reports', () => {
         const contract = createContract(ledger, {
           title: 'Failed closeout event contract',
           createdBy: 'test-agent',
+        });
+        acceptContract(ledger, {
+          contractId: contract.id,
+          actor: 'test-agent',
         });
         addCriterion(ledger, {
           contractId: contract.id,
@@ -366,6 +588,10 @@ describe('closeout gates exports and audit reports', () => {
         const contract = createContract(ledger, {
           title: 'Clean audit contract',
           createdBy: 'test-agent',
+        });
+        acceptContract(ledger, {
+          contractId: contract.id,
+          actor: 'test-agent',
         });
         closeContract(ledger, {
           contractId: contract.id,
