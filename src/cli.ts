@@ -60,14 +60,23 @@ function getInvocationArgv(deps: ProgramDeps, program: Command): string[] {
   return deps.argv ?? program.args;
 }
 
-function hasChildCommandSeparator(argv: string[], subcommand: string): boolean {
+function hasChildCommandSeparator(
+  argv: string[],
+  subcommand: string,
+  argsBeforeSeparator: number,
+): boolean {
   const commandIndex = argv.indexOf(subcommand);
 
-  return commandIndex >= 0 && argv.indexOf('--', commandIndex + 1) >= 0;
+  return commandIndex >= 0 && argv[commandIndex + argsBeforeSeparator + 1] === '--';
 }
 
-function assertChildCommandSeparator(argv: string[], subcommand: string, usage: string): void {
-  if (!hasChildCommandSeparator(argv, subcommand)) {
+function assertChildCommandSeparator(
+  argv: string[],
+  subcommand: string,
+  argsBeforeSeparator: number,
+  usage: string,
+): void {
+  if (!hasChildCommandSeparator(argv, subcommand, argsBeforeSeparator)) {
     throw new Error(`${subcommand} requires "--" before the child command: ${usage}`);
   }
 }
@@ -361,6 +370,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
             assertChildCommandSeparator(
               argv,
               'verifier-add-command',
+              2,
               'verifier-add-command <contractId> <name> -- <command...>',
             );
             const verifier = usingLedger(cwd, (ledger) =>
@@ -569,6 +579,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           assertChildCommandSeparator(
             argv,
             'receipt-run',
+            1,
             'receipt-run <contractId> -- <command...>',
           );
           const [bin, ...args] = commandArgs;
