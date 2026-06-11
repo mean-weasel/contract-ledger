@@ -37,6 +37,17 @@ export type AcceptContractInput = {
   clock?: Clock;
 };
 
+export type CloseContractInput = {
+  contractId: string;
+  actor: string;
+  clock?: Clock;
+};
+
+export type CloseContractResult = {
+  ok: boolean;
+  problems: string[];
+};
+
 function toContractRecord(row: ContractRow): ContractRecord {
   return {
     id: row.id,
@@ -160,6 +171,125 @@ export function acceptContract(ledger: Ledger, input: AcceptContractInput): Cont
   });
 
   return record;
+}
+
+export function closeContract(ledger: Ledger, input: CloseContractInput): CloseContractResult {
+  const clock = input.clock ?? systemClock;
+  const existing = getContract(ledger, input.contractId);
+
+  if (existing === undefined) {
+    throw new Error(`Contract not found: ${input.contractId}`);
+  }
+
+  recordEvent(ledger, {
+    contractId: input.contractId,
+    scopeType: 'contract',
+    scopeId: input.contractId,
+    actor: input.actor,
+    eventType: 'closeout_attempted',
+    payload: {},
+    clock,
+  });
+
+  const problems: string[] = [];
+  const openCriteria = ledger.db
+    .prepare(
+      `
+      select id, status
+      from criteria
+      where contract_id = ?
+        and status not in ('satisfied', 'deferred', 'rejected')
+      order by created_at, rowid
+    `,
+    )
+    .all(input.contractId) as Array<{ id: string; status: string }>;
+
+  if (openCriteria.length > 0) {
+    const labels = openCriteria.map((criterion) => `${criterion.id} (${criterion.status})`);
+    problems.push(`Pending criteria must be satisfied, deferred, or rejected: ${labels.join(', ')}`);
+  }
+
+  const unprovedCriteria = ledger.db
+    .prepare(
+      `
+      select criteria.id
+      from criteria
+      where criteria.contract_id = ?
+        and criteria.status = 'satisfied'
+        and not exists (
+          select 1
+          from receipts
+          where receipts.contract_id = criteria.contract_id
+            and receipts.criterion_id = criteria.id
+            and receipts.status = 'pass'
+        )
+      order by criteria.created_at, criteria.rowid
+    `,
+    )
+    .all(input.contractId) as Array<{ id: string }>;
+
+  if (unprovedCriteria.length > 0) {
+    problems.push(
+      `Satisfied criteria missing a passing receipt: ${unprovedCriteria
+        .map((criterion) => criterion.id)
+        .join(', ')}`,
+    );
+  }
+
+  const pendingFailureModes = ledger.db
+    .prepare(
+      `
+      select id
+      from failure_modes
+      where contract_id = ?
+        and required = 1
+        and status = 'pending'
+      order by created_at, rowid
+    `,
+    )
+    .all(input.contractId) as Array<{ id: string }>;
+
+  if (pendingFailureModes.length > 0) {
+    problems.push(
+      `Required failure modes are still pending: ${pendingFailureModes
+        .map((failureMode) => failureMode.id)
+        .join(', ')}`,
+    );
+  }
+
+  if (problems.length > 0) {
+    return { ok: false, problems };
+  }
+
+  const result = ledger.db
+    .prepare(
+      `
+      update contracts
+      set
+        status = 'closed',
+        closed_at = @closedAt
+      where id = @id
+        and status <> 'closed'
+    `,
+    )
+    .run({
+      id: input.contractId,
+      closedAt: clock.now(),
+    });
+
+  if (result.changes > 0) {
+    recordEvent(ledger, {
+      contractId: input.contractId,
+      scopeType: 'contract',
+      scopeId: input.contractId,
+      actor: input.actor,
+      eventType: 'contract_closed',
+      payload: {},
+      clock,
+    });
+  }
+
+  return { ok: true, problems: [] };
 }
 
 export function getContract(ledger: Ledger, contractId: string): ContractRecord | undefined {
