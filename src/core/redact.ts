@@ -61,7 +61,7 @@ export function redactArgv(argv: string[]): string[] {
       continue;
     }
 
-    if (arg.startsWith('--') || arg === '-H') {
+    if (arg.startsWith('--') || arg === '-H' || arg.startsWith('-H=')) {
       const equalsIndex = arg.indexOf('=');
 
       if (equalsIndex > -1) {

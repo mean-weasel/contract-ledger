@@ -193,6 +193,7 @@ describe('ledger schema and audit', () => {
     expect(redactArgv(['--header=Authorization: Bearer live-secret'])).toEqual([
       '--header=[REDACTED]',
     ]);
+    expect(redactArgv(['-H=Authorization: Bearer live-secret'])).toEqual(['-H=[REDACTED]']);
     expect(redactArgv(['Cookie: session=abc123'])).toEqual(['[REDACTED]']);
   });
 
