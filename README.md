@@ -131,6 +131,8 @@ Operator handoff steps and expected `npm pack` contents are documented in
   publishing, and release handoff.
 - `examples/loop-conveyors.md`: copyable conveyor templates that map each loop
   to contracts, criteria, verifiers, failure modes, receipts, and closeout.
+- `skills/contract-ledger/SKILL.md`: agent-facing workflow for using the CLI to
+  create contracts, gather receipts, disprove failure modes, and close work.
 
 ## Design
 
