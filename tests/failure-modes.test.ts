@@ -229,6 +229,122 @@ describe('failure mode queue', () => {
     });
   });
 
+  it('rejects invalid runtime status without updating or recording a status-change event', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const contract = createContract(ledger, {
+          title: 'Reject invalid status',
+          createdBy: 'test-agent',
+        });
+        const failureMode = addFailureMode(ledger, {
+          contractId: contract.id,
+          failureMode: 'Runtime caller bypasses TypeScript.',
+          whyPlausible: 'Built JavaScript can pass arbitrary strings.',
+          checkDescription: 'Attempt to resolve with an unsupported status.',
+          expectedProof: { receipt: 'manual-review' },
+          resolutionRule: 'Only known terminal statuses are valid.',
+          required: true,
+          actor: 'test-agent',
+        });
+
+        expect(() => {
+          resolveFailureMode(ledger, {
+            id: failureMode.id,
+            status: 'done' as never,
+            actor: 'test-agent',
+          });
+        }).toThrow('Invalid failure mode status: done');
+
+        const stored = ledger.db
+          .prepare('select status, residual_risk, resolved_at from failure_modes where id = ?')
+          .get(failureMode.id) as {
+          status: string;
+          residual_risk: string | null;
+          resolved_at: string | null;
+        };
+        expect(stored).toEqual({
+          status: 'pending',
+          residual_risk: null,
+          resolved_at: null,
+        });
+
+        const statusChangeEvents = ledger.db
+          .prepare(
+            `
+            select count(*) as count
+            from events
+            where event_type = 'failure_mode_status_changed'
+          `,
+          )
+          .get() as { count: number };
+
+        expect(statusChangeEvents.count).toBe(0);
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
+  it('rejects lossy expectedProof values before inserting or recording an added event', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const contract = createContract(ledger, {
+          title: 'Reject lossy expected proof',
+          createdBy: 'test-agent',
+        });
+        const invalidProofs = [
+          { label: 'undefined', value: { command: undefined } },
+          { label: 'function', value: { command: () => 'npm test' } },
+          { label: 'NaN', value: { metrics: [Number.NaN] } },
+        ];
+
+        for (const invalidProof of invalidProofs) {
+          expect(() => {
+            addFailureMode(ledger, {
+              contractId: contract.id,
+              failureMode: `Lossy expected proof ${invalidProof.label}.`,
+              whyPlausible: 'JSON.stringify can silently change the proof shape.',
+              checkDescription: 'Attempt to insert unsupported expected proof data.',
+              expectedProof: invalidProof.value,
+              resolutionRule: 'Reject lossy proof values.',
+              required: true,
+              actor: 'test-agent',
+            });
+          }).toThrow('expectedProof must be JSON-serializable without lossy values');
+        }
+
+        const rows = ledger.db
+          .prepare(
+            `
+            select count(*) as count
+            from failure_modes
+            where contract_id = ?
+          `,
+          )
+          .get(contract.id) as { count: number };
+        const addedEvents = ledger.db
+          .prepare(
+            `
+            select count(*) as count
+            from events
+            where contract_id = ?
+              and event_type = 'failure_mode_added'
+          `,
+          )
+          .get(contract.id) as { count: number };
+
+        expect(rows.count).toBe(0);
+        expect(addedEvents.count).toBe(0);
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
   it('lists contract failure modes ordered by creation time', async () => {
     await withTempWorkspace((root) => {
       const ledger = openLedger({ cwd: root });

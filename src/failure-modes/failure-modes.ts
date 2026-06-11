@@ -44,11 +44,76 @@ type FailureModeContractRow = {
   contract_id: string;
 };
 
+const FAILURE_MODE_RESOLUTION_STATUSES: ReadonlySet<string> = new Set([
+  'ruled_out',
+  'confirmed',
+  'inconclusive',
+  'accepted_risk',
+]);
+
+function assertFailureModeResolutionStatus(status: unknown): asserts status is FailureModeResolutionStatus {
+  if (typeof status !== 'string' || !FAILURE_MODE_RESOLUTION_STATUSES.has(status)) {
+    throw new Error(`Invalid failure mode status: ${String(status)}`);
+  }
+}
+
+function isPlainJsonObject(value: object): boolean {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function assertJsonSerializable(value: unknown, seen = new Set<object>()): void {
+  if (value === null) {
+    return;
+  }
+
+  switch (typeof value) {
+    case 'string':
+    case 'boolean':
+      return;
+    case 'number':
+      if (Number.isFinite(value)) {
+        return;
+      }
+      break;
+    case 'object':
+      if (seen.has(value)) {
+        break;
+      }
+      seen.add(value);
+
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          assertJsonSerializable(item, seen);
+        }
+        seen.delete(value);
+        return;
+      }
+
+      if (isPlainJsonObject(value)) {
+        for (const item of Object.values(value)) {
+          assertJsonSerializable(item, seen);
+        }
+        seen.delete(value);
+        return;
+      }
+      break;
+  }
+
+  throw new Error('expectedProof must be JSON-serializable without lossy values');
+}
+
+function stringifyExpectedProof(expectedProof: unknown): string {
+  assertJsonSerializable(expectedProof);
+  return JSON.stringify(expectedProof);
+}
+
 export function addFailureMode(ledger: Ledger, input: AddFailureModeInput): { id: string } {
   const id = createId('fm');
   const status = 'pending';
   const clock = input.clock ?? systemClock;
   const createdAt = clock.now();
+  const expectedProofJson = stringifyExpectedProof(input.expectedProof);
 
   ledger.db
     .prepare(
@@ -95,7 +160,7 @@ export function addFailureMode(ledger: Ledger, input: AddFailureModeInput): { id
       linkedCriterionId: input.linkedCriterionId ?? null,
       checkDescription: input.checkDescription,
       expectedVerifierId: input.expectedVerifierId ?? null,
-      expectedProofJson: JSON.stringify(input.expectedProof),
+      expectedProofJson,
       resolutionRule: input.resolutionRule,
       status,
       required: input.required ? 1 : 0,
@@ -123,6 +188,8 @@ export function addFailureMode(ledger: Ledger, input: AddFailureModeInput): { id
 }
 
 export function resolveFailureMode(ledger: Ledger, input: ResolveFailureModeInput): void {
+  assertFailureModeResolutionStatus(input.status);
+
   const clock = input.clock ?? systemClock;
   const existing = ledger.db
     .prepare(
