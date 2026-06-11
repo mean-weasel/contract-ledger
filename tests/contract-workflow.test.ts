@@ -129,4 +129,35 @@ describe('contract workflow records', () => {
       }
     });
   });
+
+  it('does not record an accepted event when accepting a missing contract', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+      const missingContractId = 'ctr_missing';
+
+      try {
+        expect(() => {
+          acceptContract(ledger, {
+            contractId: missingContractId,
+            actor: 'test-agent',
+          });
+        }).toThrow(`Contract not found: ${missingContractId}`);
+
+        const acceptedEvents = ledger.db
+          .prepare(
+            `
+            select count(*) as count
+            from events
+            where contract_id = ?
+              and event_type = 'contract_accepted'
+          `,
+          )
+          .get(missingContractId) as { count: number };
+
+        expect(acceptedEvents.count).toBe(0);
+      } finally {
+        ledger.close();
+      }
+    });
+  });
 });

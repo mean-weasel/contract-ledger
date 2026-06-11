@@ -125,7 +125,7 @@ export function createContract(ledger: Ledger, input: CreateContractInput): Cont
 export function acceptContract(ledger: Ledger, input: AcceptContractInput): ContractRecord {
   const clock = input.clock ?? systemClock;
 
-  ledger.db
+  const result = ledger.db
     .prepare(
       `
       update contracts
@@ -140,6 +140,15 @@ export function acceptContract(ledger: Ledger, input: AcceptContractInput): Cont
       acceptedAt: clock.now(),
     });
 
+  if (result.changes === 0) {
+    throw new Error(`Contract not found: ${input.contractId}`);
+  }
+
+  const record = getContract(ledger, input.contractId);
+  if (record === undefined) {
+    throw new Error(`Contract not found: ${input.contractId}`);
+  }
+
   recordEvent(ledger, {
     contractId: input.contractId,
     scopeType: 'contract',
@@ -149,11 +158,6 @@ export function acceptContract(ledger: Ledger, input: AcceptContractInput): Cont
     payload: {},
     clock,
   });
-
-  const record = getContract(ledger, input.contractId);
-  if (record === undefined) {
-    throw new Error(`Contract not found: ${input.contractId}`);
-  }
 
   return record;
 }
