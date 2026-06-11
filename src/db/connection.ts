@@ -4,7 +4,7 @@ import Database from 'better-sqlite3';
 
 import { getWorkspacePaths } from '../core/fs.js';
 import { systemClock, type Clock } from '../core/time.js';
-import { SCHEMA_SQL, seedSql } from './schema.js';
+import { migrateContractScopedSchema, SCHEMA_SQL, seedSql } from './schema.js';
 
 export type Ledger = {
   db: Database.Database;
@@ -29,6 +29,7 @@ export function openLedger(input: OpenLedgerInput): Ledger {
   const db = new Database(paths.ledgerPath);
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA_SQL);
+  migrateContractScopedSchema(db);
   db.exec(seedSql(clock.now()));
 
   return {

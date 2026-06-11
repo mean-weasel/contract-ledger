@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -706,6 +707,352 @@ describe('ledger schema and audit', () => {
             )
             .run();
         }).not.toThrow();
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
+  it('migrates old-shape ledgers to contract-scoped evidence links', async () => {
+    await withTempWorkspace(async (root) => {
+      const contractsDir = path.join(root, '.contracts');
+      await mkdir(contractsDir, { recursive: true });
+
+      const oldDb = new Database(path.join(contractsDir, 'ledger.sqlite'));
+      oldDb.exec(`
+        pragma foreign_keys = on;
+
+        create table goals (
+          id text primary key,
+          title text not null,
+          intent text not null default '',
+          status text not null,
+          created_by text not null,
+          created_at text not null,
+          closed_at text
+        );
+
+        create table contracts (
+          id text primary key,
+          goal_id text references goals(id),
+          title text not null,
+          intent text not null default '',
+          scope text not null default '',
+          non_goals text not null default '',
+          assumptions text not null default '',
+          status text not null,
+          repo_path text not null,
+          branch text not null default '',
+          created_by text not null,
+          created_at text not null,
+          accepted_at text,
+          started_at text,
+          closed_at text
+        );
+
+        create table criteria (
+          id text primary key,
+          contract_id text not null references contracts(id),
+          statement text not null,
+          required_evidence_kind text not null,
+          priority integer not null default 0,
+          status text not null,
+          rationale text,
+          residual_risk text,
+          created_at text not null,
+          satisfied_at text,
+          unique (id, contract_id)
+        );
+
+        create table verifiers (
+          id text primary key,
+          contract_id text not null references contracts(id),
+          criterion_id text references criteria(id),
+          adapter_id text,
+          name text not null,
+          kind text not null,
+          config_json text not null,
+          required integer not null,
+          created_at text not null,
+          unique (id, contract_id)
+        );
+
+        create table todos (
+          id text primary key,
+          contract_id text not null references contracts(id),
+          title text not null,
+          description text not null default '',
+          status text not null,
+          linked_criterion_id text references criteria(id),
+          claimed_by text,
+          created_at text not null,
+          completed_at text,
+          unique (id, contract_id)
+        );
+
+        create table failure_modes (
+          id text primary key,
+          contract_id text not null references contracts(id),
+          failure_mode text not null,
+          why_plausible text not null,
+          linked_criterion_id text references criteria(id),
+          check_description text not null,
+          expected_verifier_id text references verifiers(id),
+          expected_proof_json text not null,
+          resolution_rule text not null,
+          status text not null,
+          required integer not null,
+          fewer_than_default_reason text,
+          residual_risk text,
+          created_at text not null,
+          resolved_at text,
+          unique (id, contract_id)
+        );
+
+        create table receipts (
+          id text primary key,
+          contract_id text not null references contracts(id),
+          criterion_id text references criteria(id),
+          verifier_id text references verifiers(id),
+          todo_id text references todos(id),
+          disproof_attempt_id text references failure_modes(id),
+          kind text not null,
+          status text not null,
+          summary text not null,
+          command text,
+          exit_code integer,
+          stdout_excerpt text,
+          stderr_excerpt text,
+          adapter_metadata_json text,
+          content_hash text,
+          created_by text not null,
+          created_at text not null,
+          unique (id, contract_id)
+        );
+
+        create table artifacts (
+          id text primary key,
+          contract_id text not null references contracts(id),
+          path text not null,
+          mime_type text not null default '',
+          size_bytes integer not null,
+          sha256 text not null,
+          created_at text not null,
+          unique (id, contract_id)
+        );
+
+        create table receipt_artifacts (
+          receipt_id text not null references receipts(id),
+          artifact_id text not null references artifacts(id),
+          primary key (receipt_id, artifact_id)
+        );
+
+        insert into contracts
+          (id, title, status, repo_path, created_by, created_at)
+        values
+          ('ctr_a', 'Contract A', 'active', '${root}', 'test-agent', '2026-06-11T00:00:00.000Z'),
+          ('ctr_b', 'Contract B', 'active', '${root}', 'test-agent', '2026-06-11T00:00:00.000Z');
+
+        insert into criteria
+          (id, contract_id, statement, required_evidence_kind, status, created_at)
+        values
+          ('crit_a', 'ctr_a', 'Criterion A', 'command', 'pending', '2026-06-11T00:00:00.000Z');
+
+        insert into verifiers
+          (id, contract_id, criterion_id, name, kind, config_json, required, created_at)
+        values
+          ('ver_valid', 'ctr_a', 'crit_a', 'Valid verifier', 'command', '{}', 1, '2026-06-11T00:00:00.000Z'),
+          ('ver_invalid', 'ctr_b', 'crit_a', 'Invalid verifier', 'command', '{}', 1, '2026-06-11T00:00:00.000Z'),
+          ('ver_for_fm', 'ctr_a', null, 'Verifier for failure mode', 'command', '{}', 1, '2026-06-11T00:00:00.000Z');
+
+        insert into todos
+          (id, contract_id, title, status, linked_criterion_id, created_at)
+        values
+          ('todo_valid', 'ctr_a', 'Valid todo', 'pending', 'crit_a', '2026-06-11T00:00:00.000Z'),
+          ('todo_invalid', 'ctr_b', 'Invalid todo', 'pending', 'crit_a', '2026-06-11T00:00:00.000Z');
+
+        insert into failure_modes
+          (
+            id,
+            contract_id,
+            failure_mode,
+            why_plausible,
+            linked_criterion_id,
+            check_description,
+            expected_verifier_id,
+            expected_proof_json,
+            resolution_rule,
+            status,
+            required,
+            created_at
+          )
+        values
+          (
+            'fm_valid',
+            'ctr_a',
+            'Valid failure mode',
+            'It is plausible',
+            'crit_a',
+            'Check it',
+            'ver_for_fm',
+            '{}',
+            'Attach proof',
+            'pending',
+            1,
+            '2026-06-11T00:00:00.000Z'
+          ),
+          (
+            'fm_invalid',
+            'ctr_b',
+            'Invalid failure mode',
+            'It is plausible',
+            'crit_a',
+            'Check it',
+            'ver_for_fm',
+            '{}',
+            'Attach proof',
+            'pending',
+            1,
+            '2026-06-11T00:00:00.000Z'
+          );
+
+        insert into receipts
+          (
+            id,
+            contract_id,
+            criterion_id,
+            verifier_id,
+            todo_id,
+            disproof_attempt_id,
+            kind,
+            status,
+            summary,
+            created_by,
+            created_at
+          )
+        values
+          (
+            'rec_valid',
+            'ctr_a',
+            'crit_a',
+            'ver_valid',
+            'todo_valid',
+            'fm_valid',
+            'manual',
+            'pass',
+            'Valid receipt',
+            'test-agent',
+            '2026-06-11T00:00:00.000Z'
+          ),
+          (
+            'rec_invalid',
+            'ctr_b',
+            'crit_a',
+            'ver_valid',
+            'todo_valid',
+            'fm_valid',
+            'manual',
+            'pass',
+            'Invalid receipt',
+            'test-agent',
+            '2026-06-11T00:00:00.000Z'
+          );
+
+        insert into artifacts
+          (id, contract_id, path, size_bytes, sha256, created_at)
+        values
+          ('art_a', 'ctr_a', 'a.txt', 1, 'sha-a', '2026-06-11T00:00:00.000Z'),
+          ('art_b', 'ctr_b', 'b.txt', 1, 'sha-b', '2026-06-11T00:00:00.000Z');
+
+        insert into receipt_artifacts
+          (receipt_id, artifact_id)
+        values
+          ('rec_valid', 'art_a'),
+          ('rec_valid', 'art_b');
+      `);
+      oldDb.close();
+
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const receiptArtifactColumns = ledger.db
+          .prepare('pragma table_info(receipt_artifacts)')
+          .all() as Array<{ name: string }>;
+        expect(receiptArtifactColumns.map((column) => column.name)).toContain('contract_id');
+
+        expect(
+          ledger.db
+            .prepare('select criterion_id from verifiers where id = ?')
+            .get('ver_valid'),
+        ).toEqual({ criterion_id: 'crit_a' });
+        expect(
+          ledger.db
+            .prepare('select criterion_id from verifiers where id = ?')
+            .get('ver_invalid'),
+        ).toEqual({ criterion_id: null });
+        expect(
+          ledger.db
+            .prepare('select linked_criterion_id from todos where id = ?')
+            .get('todo_invalid'),
+        ).toEqual({ linked_criterion_id: null });
+        expect(
+          ledger.db
+            .prepare(
+              'select linked_criterion_id, expected_verifier_id from failure_modes where id = ?',
+            )
+            .get('fm_invalid'),
+        ).toEqual({ linked_criterion_id: null, expected_verifier_id: null });
+        expect(
+          ledger.db
+            .prepare(
+              'select criterion_id, verifier_id, todo_id, disproof_attempt_id from receipts where id = ?',
+            )
+            .get('rec_invalid'),
+        ).toEqual({
+          criterion_id: null,
+          verifier_id: null,
+          todo_id: null,
+          disproof_attempt_id: null,
+        });
+        expect(
+          ledger.db
+            .prepare(
+              'select count(*) as count from receipt_artifacts where receipt_id = ? and artifact_id = ?',
+            )
+            .get('rec_valid', 'art_b'),
+        ).toEqual({ count: 0 });
+        expect(
+          ledger.db
+            .prepare(
+              'select contract_id from receipt_artifacts where receipt_id = ? and artifact_id = ?',
+            )
+            .get('rec_valid', 'art_a'),
+        ).toEqual({ contract_id: 'ctr_a' });
+
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into verifiers
+                (id, contract_id, criterion_id, name, kind, config_json, required, created_at)
+              values
+                ('ver_after_migration', 'ctr_b', 'crit_a', 'Verifier B', 'command', '{}', 1, '2026-06-11T00:00:00.000Z')
+            `,
+            )
+            .run();
+        }).toThrow(/FOREIGN KEY constraint failed/);
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into receipt_artifacts
+                (receipt_id, artifact_id, contract_id)
+              values
+                ('rec_valid', 'art_b', 'ctr_a')
+            `,
+            )
+            .run();
+        }).toThrow(/FOREIGN KEY constraint failed/);
       } finally {
         ledger.close();
       }
