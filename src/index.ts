@@ -5,4 +5,8 @@ export {
   recordEvent,
   withAuditContext,
 } from './audit/audit.js';
+export { acceptContract, createContract, getContract } from './contracts/contracts.js';
+export { addCriterion } from './criteria/criteria.js';
 export { openLedger } from './db/connection.js';
+export { addTodo } from './todos/todos.js';
+export { addVerifier, listAdapters, listProfiles } from './verifiers/verifiers.js';
