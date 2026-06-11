@@ -579,6 +579,67 @@ describe('CLI commands', () => {
     });
   });
 
+  it('receipt-run with an empty pass-through command is audited as failed and creates no receipt', async () => {
+    await withTempWorkspace(async (root) => {
+      const stdout: string[] = [];
+
+      await runCli({
+        cwd: root,
+        argv: [
+          'init',
+          'Empty receipt command',
+          '--intent',
+          'Check empty receipt-run pass-through',
+          '--scope',
+          'CLI tests',
+        ],
+        stdout,
+      });
+      const contractId = stdout.at(-1)?.trim();
+      expect(contractId).toMatch(/^ctr_/);
+
+      await expect(
+        runCli({
+          cwd: root,
+          argv: ['receipt-run', contractId ?? 'missing', '--'],
+          stdout,
+        }),
+      ).rejects.toThrow('receipt-run requires a command');
+
+      withLedger(root, (ledger) => {
+        const invocation = ledger.db
+          .prepare(
+            `
+            select id, status, exit_code
+            from command_invocations
+            where subcommand = 'receipt-run'
+          `,
+          )
+          .get() as { id: string; status: string; exit_code: number };
+        const completion = ledger.db
+          .prepare(
+            `
+            select payload_json
+            from events
+            where command_invocation_id = ?
+              and event_type = 'cli_completed'
+          `,
+          )
+          .get(invocation.id) as { payload_json: string };
+        const receipts = ledger.db
+          .prepare('select count(*) as count from receipts where contract_id = ?')
+          .get(contractId) as { count: number };
+
+        expect(invocation).toMatchObject({ status: 'failed', exit_code: 1 });
+        expect(JSON.parse(completion.payload_json)).toMatchObject({
+          status: 'failed',
+          error: 'receipt-run requires a command',
+        });
+        expect(receipts.count).toBe(0);
+      });
+    });
+  });
+
   it('verifier-add-command preserves child command separators after the pass-through marker', async () => {
     await withTempWorkspace(async (root) => {
       const stdout: string[] = [];
@@ -615,6 +676,67 @@ describe('CLI commands', () => {
         expect(JSON.parse(verifier?.config_json ?? '{}')).toEqual({
           command: 'npm test -- billing',
         });
+      });
+    });
+  });
+
+  it('verifier-add-command with an empty pass-through command is audited as failed and creates no verifier', async () => {
+    await withTempWorkspace(async (root) => {
+      const stdout: string[] = [];
+
+      await runCli({
+        cwd: root,
+        argv: [
+          'init',
+          'Empty verifier command',
+          '--intent',
+          'Check empty verifier pass-through',
+          '--scope',
+          'CLI tests',
+        ],
+        stdout,
+      });
+      const contractId = stdout.at(-1)?.trim();
+      expect(contractId).toMatch(/^ctr_/);
+
+      await expect(
+        runCli({
+          cwd: root,
+          argv: ['verifier-add-command', contractId ?? 'missing', 'empty-command', '--'],
+          stdout,
+        }),
+      ).rejects.toThrow('verifier-add-command requires a command');
+
+      withLedger(root, (ledger) => {
+        const invocation = ledger.db
+          .prepare(
+            `
+            select id, status, exit_code
+            from command_invocations
+            where subcommand = 'verifier-add-command'
+          `,
+          )
+          .get() as { id: string; status: string; exit_code: number };
+        const completion = ledger.db
+          .prepare(
+            `
+            select payload_json
+            from events
+            where command_invocation_id = ?
+              and event_type = 'cli_completed'
+          `,
+          )
+          .get(invocation.id) as { payload_json: string };
+        const verifiers = ledger.db
+          .prepare('select count(*) as count from verifiers where contract_id = ?')
+          .get(contractId) as { count: number };
+
+        expect(invocation).toMatchObject({ status: 'failed', exit_code: 1 });
+        expect(JSON.parse(completion.payload_json)).toMatchObject({
+          status: 'failed',
+          error: 'verifier-add-command requires a command',
+        });
+        expect(verifiers.count).toBe(0);
       });
     });
   });

@@ -353,9 +353,14 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .allowUnknownOption(true)
     .argument('<contractId>')
     .argument('<name>')
-    .argument('<command...>')
+    .argument('[command...]')
     .action(
-      async (contractId: string, name: string, commandArgs: string[], command: Command) => {
+      async (
+        contractId: string,
+        name: string,
+        commandArgs: string[] | undefined,
+        command: Command,
+      ) => {
         const argv = getInvocationArgv(deps, program);
         await audited(
           {
@@ -373,6 +378,9 @@ export function createProgram(deps: ProgramDeps = {}): Command {
               2,
               'verifier-add-command <contractId> <name> -- <command...>',
             );
+            if (commandArgs === undefined || commandArgs.length === 0) {
+              throw new Error('verifier-add-command requires a command');
+            }
             const verifier = usingLedger(cwd, (ledger) =>
               addVerifier(ledger, {
                 contractId,
@@ -563,8 +571,8 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .description('Run a command and record its receipt')
     .allowUnknownOption(true)
     .argument('<contractId>')
-    .argument('<command...>')
-    .action(async (contractId: string, commandArgs: string[], command: Command) => {
+    .argument('[command...]')
+    .action(async (contractId: string, commandArgs: string[] | undefined, command: Command) => {
       const argv = getInvocationArgv(deps, program);
       await audited(
         {
@@ -582,7 +590,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
             1,
             'receipt-run <contractId> -- <command...>',
           );
-          const [bin, ...args] = commandArgs;
+          const [bin, ...args] = commandArgs ?? [];
           if (bin === undefined) {
             throw new Error('receipt-run requires a command');
           }
