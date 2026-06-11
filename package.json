@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
-    "contract": "./dist/cli.js"
+    "contract": "dist/cli.js"
   },
   "files": [
     "dist",
