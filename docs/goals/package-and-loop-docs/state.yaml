@@ -1,0 +1,348 @@
+# GoalBuddy v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "Package and Loop Docs"
+  slug: "package-and-loop-docs"
+  kind: specific
+  tranche: "Prepare npm/GitHub packaging and document loop/conveyor examples for Contract Ledger."
+  status: done
+  oracle:
+    signal: "Package readiness and docs evidence: npm/GitHub publish path is encoded, npm pack dry-run is clean, and docs include concrete loop examples for route/Ralph loops, coverage, UX gaps, and Limner-style verification."
+    cadence: "after each Worker package and at final audit"
+    final_proof: "Final receipt cites passing npm run check, npm pack --dry-run output, package/release files changed, and docs/landing content that includes the requested loop examples."
+  intake:
+    original_request: "Make a GoalBuddy prep-board plan for npm/GitHub packaging and docs/landing examples, including a route loop."
+    interpreted_outcome: "The repo has an executable board to prepare package publishing and explain how Contract Ledger supports repeated agent improvement loops."
+    input_shape: specific
+    audience: "Contract Ledger maintainers and early users"
+    authority: requested
+    proof_type: artifact
+    completion_proof: "Repo artifacts plus verification prove package readiness and docs coverage; final audit records full_outcome_complete: true."
+    likely_misfire: "Create generic packaging/docs text without making the package publishable or without concrete loop examples grounded in the ledger."
+    blind_spots_considered:
+      - "npm scope ownership and credentials may require operator action."
+      - "GitHub Packages may be optional or secondary to npmjs."
+      - "Landing page location may need discovery because the repo may only have README/docs today."
+      - "Loop examples must be operational workflows, not marketing-only copy."
+    existing_plan_facts:
+      - "Add npm/GitHub packaging readiness."
+      - "Prefer npm trusted publishing/provenance where feasible."
+      - "Document how the audit ledger helps repeated loops over test coverage, UX gaps, and similar work."
+      - "Include route/Ralph-loop style examples."
+      - "Put examples in documentation and probably a landing page."
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+  planning_is_not_completion: true
+  queued_required_worker_blocks_completion: true
+  continuous_until_full_outcome: true
+  missing_input_or_credentials_do_not_stop_goal: true
+  preserve_and_validate_existing_plan: true
+  intake_misfire_must_be_audited: true
+  goal_pressure_requires_oracle: true
+  no_completion_on_weak_proof: true
+  slice_policy:
+    max_consecutive_tiny_tasks: 2
+    prefer_vertical_slices: true
+    judge_picks_largest_safe_slice: true
+    worker_completes_whole_slice: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+visual_board:
+  selected: local
+  local:
+    status: live
+    url: "http://goalbuddy.localhost:41737/package-and-loop-docs/"
+    command: "npx goalbuddy board docs/goals/package-and-loop-docs"
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: done
+    reasoning_hint: default
+    objective: "Map packaging, release, documentation, and landing-page surfaces for the repo."
+    inputs:
+      - "package.json"
+      - "README.md"
+      - "docs/"
+      - ".github/"
+      - "tests/"
+      - "dist/ after build if needed"
+    constraints:
+      - "Read-only."
+      - "Do not edit implementation or docs."
+      - "Identify exact files that should be changed or created."
+      - "Check whether a landing page exists; if not, recommend the repo-native location for one."
+    expected_output:
+      - "Package metadata gaps."
+      - "CI/release workflow gaps."
+      - "Docs/landing-page surfaces."
+      - "Verification commands for packaging and docs."
+      - "Candidate Worker slices with allowed files."
+    receipt:
+      result: done
+      summary: "Mapped package, release, docs, landing, tests, and dist surfaces. Package dry-run succeeds and includes only README, package.json, and dist JS, but metadata, CI/release automation, public install docs, landing content, and concrete loop examples are missing or incomplete."
+      evidence:
+        - "package.json defines @mean-weasel/contract-ledger@0.1.0, bin contract -> ./dist/cli.js, files [dist, README.md], scripts build/check/dev/test/typecheck, Node >=22."
+        - "package.json lacks license, author, repository, homepage, bugs, keywords, publishConfig, provenance/release script, and packageManager metadata."
+        - "README.md has local install/dev usage and installed binary note, but not public npm install/npx usage, GitHub/npm publishing handoff, or release process."
+        - "No .github files were found; CI and trusted-publish release workflow files likely need to be created."
+        - "docs/ contains design/planning docs and this GoalBuddy board, but no user-facing docs index, publish docs, loop docs, or landing page."
+        - "npm pack --dry-run exited 0 and reported README.md, package.json, and dist/**/*.js; package size 15.9 kB, unpacked 87.2 kB."
+        - "Search found no concrete route/Ralph loop, coverage loop, UX gap loop, or Limner-style verification examples in user docs."
+      facts:
+        - "Package readiness likely touches package.json, README.md, .github/workflows/**, and docs/**."
+        - "Docs/landing likely touches README.md, docs/usage.md or docs/package-and-release.md, docs/loops.md, and docs/landing.md."
+        - "Verification commands identified: npm run check; npm pack --dry-run; git diff --check; rg install/use terms; rg loop example terms."
+      contradictions:
+        - "Goal oracle requires encoded npm/GitHub publish path, but repo currently has no .github workflow and package metadata lacks publish/repository fields."
+        - "README says installed binary is contract after npm run build, but public package consumption docs do not show npm install -g, npm exec/npx, or package-scoped invocation."
+      ambiguity_requiring_judge:
+        - "Whether GitHub Packages is required or npmjs plus GitHub CI/release is sufficient."
+        - "Whether landing page should be README/docs markdown or a separate website app."
+        - "Whether examples should be docs-only or include executable examples under examples/**."
+      commands:
+        - "npm pack --dry-run"
+        - "rg package/release/docs/loop terms across package.json README.md docs tests"
+
+  - id: T002
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "Choose the first safe implementation package after Scout evidence."
+    inputs:
+      - "T001 receipt"
+      - "docs/goals/package-and-loop-docs/goal.md"
+      - "Current git status"
+    constraints:
+      - "Read-only."
+      - "Do not choose publishing to npm as a Worker task without explicit operator approval."
+      - "Prefer the largest safe useful slice, not one tiny metadata edit."
+    expected_output:
+      - "Decision."
+      - "Exact Worker objective."
+      - "allowed_files."
+      - "verify commands."
+      - "stop_if conditions."
+      - "Whether packaging or docs should go first."
+    receipt:
+      result: done
+      decision: approved
+      full_outcome_complete: false
+      rationale: "Packaging should go first because the pack payload is already clean, but publish metadata, CI/release encoding, and install/release docs are missing; those choices define terms later loop docs should reference."
+      evidence:
+        - "T001 reports npm pack --dry-run exits 0 and includes README.md, package.json, and dist/**/*.js."
+        - "T001 reports package.json lacks license, author, repository, homepage, bugs, keywords, publishConfig, provenance/release script, and packageManager metadata."
+        - "T001 reports no .github files and no public npm install/npx or release process docs."
+      required_board_updates:
+        - "Activate T003 as packaging-first readiness slice."
+
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "Implement a packaging-first readiness slice: add npm package metadata and publishConfig without changing CLI behavior; add GitHub CI and a gated npm trusted-publishing/provenance release workflow; update README and package/release docs with npm install/npx usage, npm pack verification, and operator handoff steps. Do not publish to npm or GitHub Packages."
+    allowed_files:
+      - "package.json"
+      - "README.md"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
+      - "docs/package-and-release.md"
+    verify:
+      - "npm run check"
+      - "npm pack --dry-run"
+      - "git diff --check"
+      - "rg \"npm install|npx|npm pack|provenance|trusted publishing|GitHub\" README.md docs/package-and-release.md package.json .github/workflows"
+    stop_if:
+      - "Publishing credentials, npm organization ownership, or destructive release settings are required."
+      - "The workflow would publish automatically without an explicit tag, release, or manual operator action."
+      - "Need to modify files outside allowed_files."
+      - "npm pack includes unintended files or omits required CLI files."
+      - "Verification fails twice."
+    receipt:
+      result: done
+      changed_files:
+        - "package.json"
+        - "README.md"
+        - ".github/workflows/ci.yml"
+        - ".github/workflows/release.yml"
+        - "docs/package-and-release.md"
+      commands:
+        - cmd: "npm run check"
+          status: pass
+        - cmd: "npm pack --dry-run"
+          status: pass
+        - cmd: "git diff --check"
+          status: pass
+        - cmd: "rg \"npm install|npx|npm pack|provenance|trusted publishing|GitHub\" README.md docs/package-and-release.md package.json .github/workflows"
+          status: pass
+      summary: "Added npm package metadata, publishConfig with provenance, CI, and a gated GitHub Release/manual npm trusted-publishing workflow. Updated README and package/release docs with npm install/npx usage, npm pack verification, expected package contents, and operator handoff steps."
+      remaining_blockers: []
+      verification_attempts: 1
+      stopped_because: null
+
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "Implement docs or landing-page content that explains install, npm/GitHub packaging, and first-use CLI flows."
+    allowed_files:
+      - "README.md"
+      - "docs/**"
+    verify:
+      - "npm run check"
+      - "rg \"npm install|npx|contract init|ledger.sqlite\" README.md docs"
+      - "git diff --check"
+    stop_if:
+      - "A separate website app or deployed landing page is required but not present."
+      - "Need product/design assets outside README.md or docs/**."
+      - "Verification fails twice."
+    receipt:
+      result: done
+      changed_files:
+        - "README.md"
+        - "docs/getting-started.md"
+      commands:
+        - cmd: "npm run check"
+          status: pass
+        - cmd: "rg \"npm install|npx|contract init|ledger.sqlite\" README.md docs"
+          status: pass
+        - cmd: "git diff --check"
+          status: pass
+      summary: "Added first-use CLI documentation covering install, npx, contract init, ledger.sqlite, criteria, verifiers, receipts, failure modes, export, closeout, and npm/GitHub release path. README now links install, packaging, and getting-started docs."
+      remaining_blockers: []
+      verification_attempts: 1
+      stopped_because: null
+
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "Document loop/conveyor examples showing how Contract Ledger supports repeated agent improvement work."
+    allowed_files:
+      - "README.md"
+      - "docs/**"
+      - "examples/**"
+    verify:
+      - "npm run check"
+      - "rg \"route loop|Ralph|coverage|UX|Limner|failure mode|receipt\" README.md docs examples"
+      - "git diff --check"
+    stop_if:
+      - "The examples require a formal acronym definition the operator has not approved."
+      - "Need executable demo code outside allowed_files."
+      - "Verification fails twice."
+    expected_output:
+      - "At least one route/Ralph-loop style conveyor example."
+      - "At least one test coverage expansion loop example."
+      - "At least one UX gap or Limner visual verification example."
+      - "Each example maps contracts, criteria, verifiers, failure modes, receipts, and closeout."
+    receipt:
+      result: done
+      changed_files:
+        - "README.md"
+        - "docs/loops.md"
+        - "examples/loop-conveyors.md"
+      commands:
+        - cmd: "npm run check"
+          status: pass
+        - cmd: "rg \"route loop|Ralph|coverage|UX|Limner|failure mode|receipt\" README.md docs examples"
+          status: pass
+        - cmd: "git diff --check"
+          status: pass
+      summary: "Added and corrected route/Ralph, coverage, and UX/Limner loop conveyor docs. Examples now capture required failure mode IDs and resolve them after relevant receipts/checks and before export/closeout."
+      remaining_blockers: []
+      verification_attempts: 1
+      stopped_because: null
+
+  - id: T006
+    type: worker
+    assignee: Worker
+    status: blocked
+    reasoning_hint: default
+    objective: "Add optional example artifacts or templates if Judge/PM determines examples need executable scaffolding."
+    allowed_files:
+      - "examples/**"
+      - "docs/**"
+      - "README.md"
+    verify:
+      - "npm run check"
+      - "git diff --check"
+    stop_if:
+      - "Examples would duplicate CLI tests without adding user-facing value."
+      - "Need to change CLI behavior."
+      - "Verification fails twice."
+    receipt:
+      result: blocked
+      summary: "Not required for this tranche: T005 already added repo-native example artifacts under examples/** and docs/loops.md. Executable demo scaffolding would require a separate decision and is not needed to satisfy the current oracle."
+      evidence:
+        - "examples/loop-conveyors.md contains copyable route/Ralph, coverage, and UX/Limner conveyor templates."
+        - "docs/loops.md explains each loop in terms of contracts, criteria, verifiers, failure modes, receipts, and closeout."
+      stopped_because: "Optional scaffolding not needed for current tranche."
+
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "Audit whether packaging readiness and loop documentation satisfy the original outcome."
+    inputs:
+      - "All done task receipts"
+      - "Last verification"
+      - "Current git status"
+      - "npm pack --dry-run output"
+      - "Docs/landing-page content"
+    constraints:
+      - "Read-only."
+      - "Reject completion if publish readiness is not evidenced."
+      - "Reject completion if route/Ralph-loop, coverage, UX, and Limner-style examples are missing or too vague."
+      - "Reject completion if npm/GitHub publishing steps require operator credentials and no handoff is recorded."
+    expected_output:
+      - "complete | not_complete"
+      - "full_outcome_complete: true | false"
+      - "missing evidence"
+      - "next task if not complete"
+    receipt:
+      result: done
+      decision: complete
+      full_outcome_complete: true
+      rationale: "Packaging readiness is evidenced by metadata, CI/release workflows, operator handoff docs, last passing check receipts, and a current clean npm pack dry-run. Docs include concrete route/Ralph, coverage, UX gap, and Limner-style loop examples with contracts, criteria, verifiers, failure modes, receipts, and closeout."
+      evidence:
+        - "T003 receipt: npm run check, npm pack --dry-run, git diff --check, and publish-readiness rg all passed after package metadata, CI, release workflow, README, and docs/package-and-release.md changes."
+        - "T004 receipt: npm run check and docs rg passed after adding README/docs first-use install, npx, contract init, ledger.sqlite, and package/GitHub release path content."
+        - "T005 receipt and state last_verification: npm run check, git diff --check, and rg for route loop/Ralph/coverage/UX/Limner/failure mode/receipt passed."
+        - "npm pack --dry-run exits 0 and includes README.md, package.json, docs/package-and-release.md, dist/cli.js, dist/index.js, and compiled dist modules."
+        - "docs/package-and-release.md records npm install/npx usage, npm run check, npm pack --dry-run, expected package contents, GitHub CI, npm trusted publishing with provenance, no GitHub Packages publish, and operator handoff."
+        - ".github/workflows/ci.yml runs npm ci, npm run check, and npm pack --dry-run on push and pull_request."
+        - ".github/workflows/release.yml publishes only on GitHub Release or manual dispatch with confirm_publish == publish-npm using npm publish --provenance --access public."
+        - "README.md links getting-started, loops, package/release docs, and loop conveyor examples."
+        - "docs/loops.md and examples/loop-conveyors.md cover route/Ralph, coverage, and UX/Limner loops with contracts, criteria, verifiers, failure modes, receipts, and closeout."
+      missing_evidence: []
+      required_board_updates: []
+
+checks:
+  dirty_fingerprint: unknown
+  last_verification:
+    result: pass
+    task: T005
+    commands:
+      - "npm run check"
+      - "git diff --check"
+      - "rg \"route loop|Ralph|coverage|UX|Limner|failure mode|receipt\" README.md docs examples"

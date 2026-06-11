@@ -3,13 +3,37 @@
   "version": "0.1.0",
   "description": "SQLite-backed local CLI contract ledger for agent completion receipts.",
   "type": "module",
+  "main": "./dist/index.js",
   "bin": {
     "contract": "./dist/cli.js"
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "docs/package-and-release.md"
   ],
+  "keywords": [
+    "agent",
+    "contracts",
+    "ledger",
+    "receipts",
+    "sqlite",
+    "verification"
+  ],
+  "author": "mean-weasel",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mean-weasel/contract-ledger.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mean-weasel/contract-ledger/issues"
+  },
+  "homepage": "https://github.com/mean-weasel/contract-ledger#readme",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "packageManager": "npm@10.9.8",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "npm run typecheck && npm test && npm run build",
