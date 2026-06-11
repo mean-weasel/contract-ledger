@@ -1,0 +1,7 @@
+node_modules/
+dist/
+coverage/
+.contracts/
+.env
+.env.*
+*.log
