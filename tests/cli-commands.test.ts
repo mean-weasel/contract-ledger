@@ -131,6 +131,39 @@ describe('CLI commands', () => {
     });
   });
 
+  it('init allows scope to be omitted', async () => {
+    await withTempWorkspace(async (root) => {
+      const stdout: string[] = [];
+
+      await runCli({
+        cwd: root,
+        argv: ['init', 'No scope demo', '--intent', 'Prove optional scope works'],
+        stdout,
+      });
+
+      const contractId = stdout.join('\n').trim();
+      expect(contractId).toMatch(/^ctr_/);
+
+      withLedger(root, (ledger) => {
+        const contract = ledger.db
+          .prepare('select scope from contracts where id = ?')
+          .get(contractId) as { scope: string } | undefined;
+        const invocation = ledger.db
+          .prepare(
+            `
+            select status, exit_code
+            from command_invocations
+            where subcommand = 'init'
+          `,
+          )
+          .get() as { status: string; exit_code: number };
+
+        expect(contract).toEqual({ scope: '' });
+        expect(invocation).toEqual({ status: 'ok', exit_code: 0 });
+      });
+    });
+  });
+
   it('links domain events created by CLI commands to the command invocation id', async () => {
     await withTempWorkspace(async (root) => {
       const stdout: string[] = [];

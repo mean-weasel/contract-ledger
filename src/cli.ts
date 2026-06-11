@@ -234,7 +234,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .description('Create a draft contract')
     .argument('<title>')
     .requiredOption('--intent <intent>', 'Contract intent')
-    .requiredOption('--scope <scope>', 'Contract scope')
+    .option('--scope <scope>', 'Contract scope', '')
     .action(
       async (
         title: string,
