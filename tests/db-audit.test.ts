@@ -184,4 +184,155 @@ describe('ledger schema and audit', () => {
       '--url=http://localhost',
     ]);
   });
+
+  it('redactArgv redacts auth and cookie header values', () => {
+    expect(
+      redactArgv(['--header', 'Authorization: Bearer live-secret', '--name', 'demo']),
+    ).toEqual(['--header', '[REDACTED]', '--name', 'demo']);
+    expect(redactArgv(['-H', 'Cookie: session=abc123'])).toEqual(['-H', '[REDACTED]']);
+    expect(redactArgv(['--header=Authorization: Bearer live-secret'])).toEqual([
+      '--header=[REDACTED]',
+    ]);
+    expect(redactArgv(['Cookie: session=abc123'])).toEqual(['[REDACTED]']);
+  });
+
+  it('receipts enforce linked evidence rows belong to the same contract', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const now = '2026-06-11T00:00:00.000Z';
+        const insertContract = ledger.db.prepare(`
+          insert into contracts
+            (id, title, status, repo_path, created_by, created_at)
+          values
+            (@id, @title, 'active', @repoPath, 'test-agent', @createdAt)
+        `);
+        insertContract.run({
+          id: 'ctr_a',
+          title: 'Contract A',
+          repoPath: root,
+          createdAt: now,
+        });
+        insertContract.run({
+          id: 'ctr_b',
+          title: 'Contract B',
+          repoPath: root,
+          createdAt: now,
+        });
+        ledger.db
+          .prepare(
+            `
+            insert into criteria
+              (id, contract_id, statement, required_evidence_kind, status, created_at)
+            values
+              ('crit_a', 'ctr_a', 'Criterion A', 'command', 'pending', @createdAt)
+          `,
+          )
+          .run({ createdAt: now });
+        ledger.db
+          .prepare(
+            `
+            insert into verifiers
+              (id, contract_id, name, kind, config_json, required, created_at)
+            values
+              ('ver_a', 'ctr_a', 'Verifier A', 'command', '{}', 1, @createdAt)
+          `,
+          )
+          .run({ createdAt: now });
+        ledger.db
+          .prepare(
+            `
+            insert into todos
+              (id, contract_id, title, status, created_at)
+            values
+              ('todo_a', 'ctr_a', 'Todo A', 'pending', @createdAt)
+          `,
+          )
+          .run({ createdAt: now });
+        ledger.db
+          .prepare(
+            `
+            insert into failure_modes
+              (
+                id,
+                contract_id,
+                failure_mode,
+                why_plausible,
+                check_description,
+                expected_proof_json,
+                resolution_rule,
+                status,
+                required,
+                created_at
+              )
+            values
+              (
+                'fm_a',
+                'ctr_a',
+                'Failure mode A',
+                'It is plausible',
+                'Check it',
+                '{}',
+                'Attach proof',
+                'pending',
+                1,
+                @createdAt
+              )
+          `,
+          )
+          .run({ createdAt: now });
+
+        ledger.db
+          .prepare(
+            `
+            insert into receipts
+              (id, contract_id, kind, status, summary, created_by, created_at)
+            values
+              ('rec_without_link', 'ctr_b', 'manual', 'pass', 'No optional link', 'test-agent', @createdAt)
+          `,
+          )
+          .run({ createdAt: now });
+
+        const expectMismatchedReceiptToFail = (column: string, value: string) => {
+          expect(() => {
+            ledger.db
+              .prepare(
+                `
+                insert into receipts
+                  (id, contract_id, ${column}, kind, status, summary, created_by, created_at)
+                values
+                  (@id, 'ctr_b', @value, 'manual', 'pass', 'Cross-contract link', 'test-agent', @createdAt)
+              `,
+              )
+              .run({
+                id: `rec_cross_contract_${column}`,
+                value,
+                createdAt: now,
+              });
+          }).toThrow(/FOREIGN KEY constraint failed/);
+        };
+
+        expectMismatchedReceiptToFail('criterion_id', 'crit_a');
+        expectMismatchedReceiptToFail('verifier_id', 'ver_a');
+        expectMismatchedReceiptToFail('todo_id', 'todo_a');
+        expectMismatchedReceiptToFail('disproof_attempt_id', 'fm_a');
+
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into receipts
+                (id, contract_id, criterion_id, kind, status, summary, created_by, created_at)
+              values
+                ('rec_same_contract', 'ctr_a', 'crit_a', 'manual', 'pass', 'Same-contract link', 'test-agent', @createdAt)
+            `,
+            )
+            .run({ createdAt: now });
+        }).not.toThrow();
+      } finally {
+        ledger.close();
+      }
+    });
+  });
 });

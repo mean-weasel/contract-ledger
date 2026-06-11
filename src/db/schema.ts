@@ -53,7 +53,8 @@ create table if not exists criteria (
   rationale text,
   residual_risk text,
   created_at text not null,
-  satisfied_at text
+  satisfied_at text,
+  unique (id, contract_id)
 );
 
 create table if not exists verifier_adapters (
@@ -92,7 +93,8 @@ create table if not exists verifiers (
   kind text not null,
   config_json text not null,
   required integer not null,
-  created_at text not null
+  created_at text not null,
+  unique (id, contract_id)
 );
 
 create table if not exists todos (
@@ -104,7 +106,8 @@ create table if not exists todos (
   linked_criterion_id text references criteria(id),
   claimed_by text,
   created_at text not null,
-  completed_at text
+  completed_at text,
+  unique (id, contract_id)
 );
 
 create table if not exists failure_modes (
@@ -122,16 +125,17 @@ create table if not exists failure_modes (
   fewer_than_default_reason text,
   residual_risk text,
   created_at text not null,
-  resolved_at text
+  resolved_at text,
+  unique (id, contract_id)
 );
 
 create table if not exists receipts (
   id text primary key,
   contract_id text not null references contracts(id),
-  criterion_id text references criteria(id),
-  verifier_id text references verifiers(id),
-  todo_id text references todos(id),
-  disproof_attempt_id text references failure_modes(id),
+  criterion_id text,
+  verifier_id text,
+  todo_id text,
+  disproof_attempt_id text,
   kind text not null,
   status text not null,
   summary text not null,
@@ -142,7 +146,11 @@ create table if not exists receipts (
   adapter_metadata_json text,
   content_hash text,
   created_by text not null,
-  created_at text not null
+  created_at text not null,
+  foreign key (criterion_id, contract_id) references criteria(id, contract_id),
+  foreign key (verifier_id, contract_id) references verifiers(id, contract_id),
+  foreign key (todo_id, contract_id) references todos(id, contract_id),
+  foreign key (disproof_attempt_id, contract_id) references failure_modes(id, contract_id)
 );
 
 create table if not exists artifacts (
