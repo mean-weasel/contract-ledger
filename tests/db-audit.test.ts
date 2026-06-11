@@ -336,4 +336,379 @@ describe('ledger schema and audit', () => {
       }
     });
   });
+
+  it('enforces same-contract links for verifiers todos and failure modes', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const now = '2026-06-11T00:00:00.000Z';
+        const insertContract = ledger.db.prepare(`
+          insert into contracts
+            (id, title, status, repo_path, created_by, created_at)
+          values
+            (@id, @title, 'active', @repoPath, 'test-agent', @createdAt)
+        `);
+        insertContract.run({
+          id: 'ctr_a',
+          title: 'Contract A',
+          repoPath: root,
+          createdAt: now,
+        });
+        insertContract.run({
+          id: 'ctr_b',
+          title: 'Contract B',
+          repoPath: root,
+          createdAt: now,
+        });
+        ledger.db
+          .prepare(
+            `
+            insert into criteria
+              (id, contract_id, statement, required_evidence_kind, status, created_at)
+            values
+              ('crit_a', 'ctr_a', 'Criterion A', 'command', 'pending', @createdAt)
+          `,
+          )
+          .run({ createdAt: now });
+        ledger.db
+          .prepare(
+            `
+            insert into verifiers
+              (id, contract_id, criterion_id, name, kind, config_json, required, created_at)
+            values
+              ('ver_same_contract', 'ctr_a', 'crit_a', 'Verifier A', 'command', '{}', 1, @createdAt)
+          `,
+          )
+          .run({ createdAt: now });
+
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into verifiers
+                (id, contract_id, criterion_id, name, kind, config_json, required, created_at)
+              values
+                ('ver_cross_contract', 'ctr_b', 'crit_a', 'Verifier B', 'command', '{}', 1, @createdAt)
+            `,
+            )
+            .run({ createdAt: now });
+        }).toThrow(/FOREIGN KEY constraint failed/);
+
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into verifiers
+                (id, contract_id, name, kind, config_json, required, created_at)
+              values
+                ('ver_without_criterion', 'ctr_b', 'Verifier without criterion', 'command', '{}', 1, @createdAt)
+            `,
+            )
+            .run({ createdAt: now });
+        }).not.toThrow();
+
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into todos
+                (id, contract_id, title, status, linked_criterion_id, created_at)
+              values
+                ('todo_cross_contract', 'ctr_b', 'Todo B', 'pending', 'crit_a', @createdAt)
+            `,
+            )
+            .run({ createdAt: now });
+        }).toThrow(/FOREIGN KEY constraint failed/);
+
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into todos
+                (id, contract_id, title, status, created_at)
+              values
+                ('todo_without_criterion', 'ctr_b', 'Todo without criterion', 'pending', @createdAt)
+            `,
+            )
+            .run({ createdAt: now });
+        }).not.toThrow();
+
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into todos
+                (id, contract_id, title, status, linked_criterion_id, created_at)
+              values
+                ('todo_same_contract', 'ctr_a', 'Todo A', 'pending', 'crit_a', @createdAt)
+            `,
+            )
+            .run({ createdAt: now });
+        }).not.toThrow();
+
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into failure_modes
+                (
+                  id,
+                  contract_id,
+                  failure_mode,
+                  why_plausible,
+                  linked_criterion_id,
+                  check_description,
+                  expected_proof_json,
+                  resolution_rule,
+                  status,
+                  required,
+                  created_at
+                )
+              values
+                (
+                  'fm_cross_criterion',
+                  'ctr_b',
+                  'Failure mode B',
+                  'It is plausible',
+                  'crit_a',
+                  'Check it',
+                  '{}',
+                  'Attach proof',
+                  'pending',
+                  1,
+                  @createdAt
+                )
+            `,
+            )
+            .run({ createdAt: now });
+        }).toThrow(/FOREIGN KEY constraint failed/);
+
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into failure_modes
+                (
+                  id,
+                  contract_id,
+                  failure_mode,
+                  why_plausible,
+                  check_description,
+                  expected_verifier_id,
+                  expected_proof_json,
+                  resolution_rule,
+                  status,
+                  required,
+                  created_at
+                )
+              values
+                (
+                  'fm_cross_verifier',
+                  'ctr_b',
+                  'Failure mode B',
+                  'It is plausible',
+                  'Check it',
+                  'ver_same_contract',
+                  '{}',
+                  'Attach proof',
+                  'pending',
+                  1,
+                  @createdAt
+                )
+            `,
+            )
+            .run({ createdAt: now });
+        }).toThrow(/FOREIGN KEY constraint failed/);
+
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into failure_modes
+                (
+                  id,
+                  contract_id,
+                  failure_mode,
+                  why_plausible,
+                  check_description,
+                  expected_proof_json,
+                  resolution_rule,
+                  status,
+                  required,
+                  created_at
+                )
+              values
+                (
+                  'fm_without_links',
+                  'ctr_b',
+                  'Failure mode without links',
+                  'It is plausible',
+                  'Check it',
+                  '{}',
+                  'Attach proof',
+                  'pending',
+                  1,
+                  @createdAt
+                )
+            `,
+            )
+            .run({ createdAt: now });
+        }).not.toThrow();
+
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into failure_modes
+                (
+                  id,
+                  contract_id,
+                  failure_mode,
+                  why_plausible,
+                  linked_criterion_id,
+                  check_description,
+                  expected_proof_json,
+                  resolution_rule,
+                  status,
+                  required,
+                  created_at
+                )
+              values
+                (
+                  'fm_same_criterion',
+                  'ctr_a',
+                  'Failure mode with criterion',
+                  'It is plausible',
+                  'crit_a',
+                  'Check it',
+                  '{}',
+                  'Attach proof',
+                  'pending',
+                  1,
+                  @createdAt
+                )
+            `,
+            )
+            .run({ createdAt: now });
+        }).not.toThrow();
+
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into failure_modes
+                (
+                  id,
+                  contract_id,
+                  failure_mode,
+                  why_plausible,
+                  check_description,
+                  expected_verifier_id,
+                  expected_proof_json,
+                  resolution_rule,
+                  status,
+                  required,
+                  created_at
+                )
+              values
+                (
+                  'fm_same_verifier',
+                  'ctr_a',
+                  'Failure mode with verifier',
+                  'It is plausible',
+                  'Check it',
+                  'ver_same_contract',
+                  '{}',
+                  'Attach proof',
+                  'pending',
+                  1,
+                  @createdAt
+                )
+            `,
+            )
+            .run({ createdAt: now });
+        }).not.toThrow();
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
+  it('receipt_artifacts enforce receipts and artifacts belong to the same contract', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const now = '2026-06-11T00:00:00.000Z';
+        const insertContract = ledger.db.prepare(`
+          insert into contracts
+            (id, title, status, repo_path, created_by, created_at)
+          values
+            (@id, @title, 'active', @repoPath, 'test-agent', @createdAt)
+        `);
+        insertContract.run({
+          id: 'ctr_a',
+          title: 'Contract A',
+          repoPath: root,
+          createdAt: now,
+        });
+        insertContract.run({
+          id: 'ctr_b',
+          title: 'Contract B',
+          repoPath: root,
+          createdAt: now,
+        });
+        ledger.db
+          .prepare(
+            `
+            insert into receipts
+              (id, contract_id, kind, status, summary, created_by, created_at)
+            values
+              ('rec_a', 'ctr_a', 'manual', 'pass', 'Receipt A', 'test-agent', @createdAt)
+          `,
+          )
+          .run({ createdAt: now });
+        ledger.db
+          .prepare(
+            `
+            insert into artifacts
+              (id, contract_id, path, size_bytes, sha256, created_at)
+            values
+              ('art_a', 'ctr_a', 'a.txt', 1, 'sha-a', @createdAt),
+              ('art_b', 'ctr_b', 'b.txt', 1, 'sha-b', @createdAt)
+          `,
+          )
+          .run({ createdAt: now });
+
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into receipt_artifacts
+                (receipt_id, artifact_id, contract_id)
+              values
+                ('rec_a', 'art_b', 'ctr_a')
+            `,
+            )
+            .run();
+        }).toThrow(/FOREIGN KEY constraint failed/);
+
+        expect(() => {
+          ledger.db
+            .prepare(
+              `
+              insert into receipt_artifacts
+                (receipt_id, artifact_id, contract_id)
+              values
+                ('rec_a', 'art_a', 'ctr_a')
+            `,
+            )
+            .run();
+        }).not.toThrow();
+      } finally {
+        ledger.close();
+      }
+    });
+  });
 });

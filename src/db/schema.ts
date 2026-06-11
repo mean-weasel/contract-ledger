@@ -87,13 +87,14 @@ create table if not exists acceptance_profiles (
 create table if not exists verifiers (
   id text primary key,
   contract_id text not null references contracts(id),
-  criterion_id text references criteria(id),
+  criterion_id text,
   adapter_id text references verifier_adapters(id),
   name text not null,
   kind text not null,
   config_json text not null,
   required integer not null,
   created_at text not null,
+  foreign key (criterion_id, contract_id) references criteria(id, contract_id),
   unique (id, contract_id)
 );
 
@@ -103,10 +104,11 @@ create table if not exists todos (
   title text not null,
   description text not null default '',
   status text not null,
-  linked_criterion_id text references criteria(id),
+  linked_criterion_id text,
   claimed_by text,
   created_at text not null,
   completed_at text,
+  foreign key (linked_criterion_id, contract_id) references criteria(id, contract_id),
   unique (id, contract_id)
 );
 
@@ -115,9 +117,9 @@ create table if not exists failure_modes (
   contract_id text not null references contracts(id),
   failure_mode text not null,
   why_plausible text not null,
-  linked_criterion_id text references criteria(id),
+  linked_criterion_id text,
   check_description text not null,
-  expected_verifier_id text references verifiers(id),
+  expected_verifier_id text,
   expected_proof_json text not null,
   resolution_rule text not null,
   status text not null,
@@ -126,6 +128,8 @@ create table if not exists failure_modes (
   residual_risk text,
   created_at text not null,
   resolved_at text,
+  foreign key (linked_criterion_id, contract_id) references criteria(id, contract_id),
+  foreign key (expected_verifier_id, contract_id) references verifiers(id, contract_id),
   unique (id, contract_id)
 );
 
@@ -150,7 +154,8 @@ create table if not exists receipts (
   foreign key (criterion_id, contract_id) references criteria(id, contract_id),
   foreign key (verifier_id, contract_id) references verifiers(id, contract_id),
   foreign key (todo_id, contract_id) references todos(id, contract_id),
-  foreign key (disproof_attempt_id, contract_id) references failure_modes(id, contract_id)
+  foreign key (disproof_attempt_id, contract_id) references failure_modes(id, contract_id),
+  unique (id, contract_id)
 );
 
 create table if not exists artifacts (
@@ -160,12 +165,16 @@ create table if not exists artifacts (
   mime_type text not null default '',
   size_bytes integer not null,
   sha256 text not null,
-  created_at text not null
+  created_at text not null,
+  unique (id, contract_id)
 );
 
 create table if not exists receipt_artifacts (
-  receipt_id text not null references receipts(id),
-  artifact_id text not null references artifacts(id),
+  receipt_id text not null,
+  artifact_id text not null,
+  contract_id text not null references contracts(id),
+  foreign key (receipt_id, contract_id) references receipts(id, contract_id),
+  foreign key (artifact_id, contract_id) references artifacts(id, contract_id),
   primary key (receipt_id, artifact_id)
 );
 
