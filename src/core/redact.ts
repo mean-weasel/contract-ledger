@@ -1,12 +1,11 @@
-const SECRET_KEYS = new Set([
-  'api-key',
-  'apikey',
+const SECRET_TOKENS = new Set([
   'auth',
   'authorization',
+  'apikey',
   'cookie',
+  'key',
   'password',
   'secret',
-  'storage-state',
   'token',
 ]);
 
@@ -17,7 +16,17 @@ function normalizeKey(key: string): string {
 }
 
 function isSecretKey(key: string): boolean {
-  return SECRET_KEYS.has(normalizeKey(key));
+  const normalized = normalizeKey(key);
+  const segments = normalized.split(/[-_.:]+/);
+
+  if (
+    segments.some((segment, index) => segment === 'api' && segments[index + 1] === 'key') ||
+    segments.some((segment, index) => segment === 'storage' && segments[index + 1] === 'state')
+  ) {
+    return true;
+  }
+
+  return segments.some((segment) => SECRET_TOKENS.has(segment));
 }
 
 export function redactArgv(argv: string[]): string[] {

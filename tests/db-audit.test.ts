@@ -171,4 +171,17 @@ describe('ledger schema and audit', () => {
       '--url=http://localhost',
     ]);
   });
+
+  it('redactArgv handles compound secret option names', () => {
+    expect(redactArgv(['--openai-api-key', 'sk-demo', '--name', 'demo'])).toEqual([
+      '--openai-api-key',
+      '[REDACTED]',
+      '--name',
+      'demo',
+    ]);
+    expect(redactArgv(['--access-token=abc', '--url=http://localhost'])).toEqual([
+      '--access-token=[REDACTED]',
+      '--url=http://localhost',
+    ]);
+  });
 });
