@@ -1,0 +1,174 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
+import { describe, expect, it } from 'vitest';
+
+import {
+  completeCommandInvocation,
+  createCommandInvocation,
+  recordEvent,
+  withAuditContext,
+} from '../src/audit/audit.js';
+import { redactArgv } from '../src/core/redact.js';
+import { openLedger } from '../src/db/connection.js';
+
+async function withTempWorkspace<T>(fn: (root: string) => T | Promise<T>): Promise<T> {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'contract-ledger-'));
+
+  try {
+    return await fn(root);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+}
+
+describe('ledger schema and audit', () => {
+  it('openLedger creates schema tables including contract and audit foundations', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const tables = ledger.db
+          .prepare("select name from sqlite_master where type = 'table' order by name")
+          .all() as Array<{ name: string }>;
+        const tableNames = tables.map((row) => row.name);
+
+        expect(tableNames).toContain('contracts');
+        expect(tableNames).toContain('command_invocations');
+        expect(tableNames).toContain('events');
+        expect(tableNames).toContain('verifier_adapters');
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
+  it('seed data includes the limner adapter', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const limner = ledger.db
+          .prepare('select name from verifier_adapters where name = ?')
+          .get('limner');
+
+        expect(limner).toBeTruthy();
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
+  it('createCommandInvocation redacts secret argv values', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const invocation = createCommandInvocation(ledger, {
+          actor: 'test-agent',
+          command: 'contract',
+          subcommand: 'status',
+          argv: ['contract', 'status', '--token', 'secret-value', '--name', 'demo'],
+          cwd: root,
+          scopeType: 'contract',
+          scopeId: 'ctr_demo',
+          contractId: 'ctr_demo',
+        });
+        const stored = ledger.db
+          .prepare('select argv_json from command_invocations where id = ?')
+          .get(invocation.id) as { argv_json: string };
+
+        expect(JSON.parse(stored.argv_json)).toEqual([
+          'contract',
+          'status',
+          '--token',
+          '[REDACTED]',
+          '--name',
+          'demo',
+        ]);
+        expect(stored.argv_json).not.toContain('secret-value');
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
+  it('recordEvent inside withAuditContext links events to command_invocation_id', async () => {
+    await withTempWorkspace(async (root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const invocation = createCommandInvocation(ledger, {
+          actor: 'test-agent',
+          command: 'contract',
+          subcommand: 'status',
+          argv: ['contract', 'status'],
+          cwd: root,
+          scopeType: 'contract',
+          scopeId: 'ctr_demo',
+          contractId: 'ctr_demo',
+        });
+
+        await withAuditContext(invocation.id, async () => {
+          recordEvent(ledger, {
+            contractId: 'ctr_demo',
+            scopeType: 'contract',
+            scopeId: 'ctr_demo',
+            actor: 'test-agent',
+            eventType: 'cli_invoked',
+            payload: { subcommand: 'status' },
+          });
+        });
+
+        const event = ledger.db
+          .prepare('select command_invocation_id from events where event_type = ?')
+          .get('cli_invoked') as { command_invocation_id: string };
+
+        expect(event.command_invocation_id).toBe(invocation.id);
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
+  it('completeCommandInvocation updates status and exit_code', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const invocation = createCommandInvocation(ledger, {
+          actor: 'test-agent',
+          command: 'contract',
+          argv: ['contract'],
+          cwd: root,
+          scopeType: 'workspace',
+        });
+
+        completeCommandInvocation(ledger, invocation.id, { exitCode: 0, status: 'ok' });
+
+        const stored = ledger.db
+          .prepare('select status, exit_code from command_invocations where id = ?')
+          .get(invocation.id) as { status: string; exit_code: number };
+
+        expect(stored.status).toBe('ok');
+        expect(stored.exit_code).toBe(0);
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
+  it('redactArgv handles separate and inline secret values', () => {
+    expect(redactArgv(['--api-key', 'abc123', '--name', 'demo'])).toEqual([
+      '--api-key',
+      '[REDACTED]',
+      '--name',
+      'demo',
+    ]);
+    expect(redactArgv(['--token=abc123', '--url=http://localhost'])).toEqual([
+      '--token=[REDACTED]',
+      '--url=http://localhost',
+    ]);
+  });
+});
