@@ -43,6 +43,19 @@ export type VerifierRecord = {
   name: string;
 };
 
+export type RegisterAdapterInput = {
+  name: string;
+  version?: string;
+  kind: string;
+  status?: string;
+  configSchema?: unknown;
+  artifactPatterns?: unknown;
+  receiptMapper?: unknown;
+  requiresJudgment?: boolean;
+  actor: string;
+  clock?: Clock;
+};
+
 type AdapterRow = {
   id: string;
   name: string;
@@ -130,6 +143,137 @@ export function addVerifier(ledger: Ledger, input: AddVerifierInput): VerifierRe
   return { id, name: input.name };
 }
 
+function toAdapterRecord(row: AdapterRow): AdapterRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    version: row.version,
+    kind: row.kind,
+    status: row.status,
+    configSchema: JSON.parse(row.config_schema_json),
+    artifactPatterns: JSON.parse(row.artifact_patterns_json),
+    receiptMapper: JSON.parse(row.receipt_mapper_json),
+    requiresJudgment: row.requires_judgment === 1,
+  };
+}
+
+export function getAdapterByNameOrId(ledger: Ledger, nameOrId: string): AdapterRecord | undefined {
+  const row = ledger.db
+    .prepare(
+      `
+      select
+        id,
+        name,
+        version,
+        kind,
+        status,
+        config_schema_json,
+        artifact_patterns_json,
+        receipt_mapper_json,
+        requires_judgment
+      from verifier_adapters
+      where id = ?
+        or name = ?
+    `,
+    )
+    .get(nameOrId, nameOrId) as AdapterRow | undefined;
+
+  return row === undefined ? undefined : toAdapterRecord(row);
+}
+
+export function registerAdapter(ledger: Ledger, input: RegisterAdapterInput): AdapterRecord {
+  const clock = input.clock ?? systemClock;
+  const existing = getAdapterByNameOrId(ledger, input.name);
+  const id = existing?.id ?? createId('adp');
+  const now = clock.now();
+  const createdAt =
+    existing === undefined
+      ? now
+      : (
+          ledger.db
+            .prepare('select created_at from verifier_adapters where id = ?')
+            .get(id) as { created_at: string }
+        ).created_at;
+
+  ledger.db
+    .prepare(
+      `
+      insert into verifier_adapters
+        (
+          id,
+          name,
+          version,
+          kind,
+          status,
+          config_schema_json,
+          artifact_patterns_json,
+          receipt_mapper_json,
+          requires_judgment,
+          created_at,
+          updated_at
+        )
+      values
+        (
+          @id,
+          @name,
+          @version,
+          @kind,
+          @status,
+          @configSchemaJson,
+          @artifactPatternsJson,
+          @receiptMapperJson,
+          @requiresJudgment,
+          @createdAt,
+          @updatedAt
+        )
+      on conflict(name) do update set
+        version = excluded.version,
+        kind = excluded.kind,
+        status = excluded.status,
+        config_schema_json = excluded.config_schema_json,
+        artifact_patterns_json = excluded.artifact_patterns_json,
+        receipt_mapper_json = excluded.receipt_mapper_json,
+        requires_judgment = excluded.requires_judgment,
+        updated_at = excluded.updated_at
+    `,
+    )
+    .run({
+      id,
+      name: input.name,
+      version: input.version ?? '1',
+      kind: input.kind,
+      status: input.status ?? 'active',
+      configSchemaJson: JSON.stringify(input.configSchema ?? {}),
+      artifactPatternsJson: JSON.stringify(input.artifactPatterns ?? []),
+      receiptMapperJson: JSON.stringify(input.receiptMapper ?? {}),
+      requiresJudgment: input.requiresJudgment === true ? 1 : 0,
+      createdAt,
+      updatedAt: now,
+    });
+
+  const adapter = getAdapterByNameOrId(ledger, input.name);
+  if (adapter === undefined) {
+    throw new Error(`Adapter not found after registration: ${input.name}`);
+  }
+
+  recordEvent(ledger, {
+    scopeType: 'adapter',
+    scopeId: adapter.id,
+    actor: input.actor,
+    eventType: existing === undefined ? 'adapter_added' : 'adapter_updated',
+    payload: {
+      name: adapter.name,
+      version: adapter.version,
+      kind: adapter.kind,
+      status: adapter.status,
+      requiresJudgment: adapter.requiresJudgment,
+    },
+    clock,
+  });
+
+  return adapter;
+}
+
 export function listAdapters(ledger: Ledger): AdapterRecord[] {
   const rows = ledger.db
     .prepare(
@@ -150,17 +294,7 @@ export function listAdapters(ledger: Ledger): AdapterRecord[] {
     )
     .all() as AdapterRow[];
 
-  return rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    version: row.version,
-    kind: row.kind,
-    status: row.status,
-    configSchema: JSON.parse(row.config_schema_json),
-    artifactPatterns: JSON.parse(row.artifact_patterns_json),
-    receiptMapper: JSON.parse(row.receipt_mapper_json),
-    requiresJudgment: row.requires_judgment === 1,
-  }));
+  return rows.map(toAdapterRecord);
 }
 
 export function listProfiles(ledger: Ledger): ProfileRecord[] {

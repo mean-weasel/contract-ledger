@@ -29,6 +29,12 @@ When working inside the Contract Ledger source repo, use:
 npm run dev -- version
 ```
 
+To install this skill into Codex from the npm package:
+
+```bash
+contract skill-install
+```
+
 ## Workflow
 
 1. Create a draft contract before implementation:
@@ -78,7 +84,16 @@ contract failure-modes-list ctr_xxx
 contract failure-modes-resolve fm_xxx --status ruled_out
 ```
 
-7. Export and close:
+7. Inspect what remains before closeout:
+
+```bash
+contract show ctr_xxx
+contract status ctr_xxx
+contract next ctr_xxx
+contract audit-log ctr_xxx
+```
+
+8. Export and close:
 
 ```bash
 contract export ctr_xxx
@@ -95,6 +110,17 @@ For repeated loops such as route triage, coverage expansion, UX gaps, or Limner-
 - Create the next contract when a receipt discovers a new issue; do not silently expand the current scope.
 - Record command verifiers for tests/builds/smoke checks and manual receipts for artifacts that cannot be rerun.
 - Export each closed contract so later agents start from recorded evidence.
+
+## Adapter Hooks
+
+Use adapters when a verifier comes from a tool with structured artifacts, such as Limner visual checks:
+
+```bash
+contract adapter-add custom-limner --kind visual_fidelity --artifact-patterns-json '[".limner/runs/*/manifest.json"]' --requires-judgment
+contract verifier-add-adapter ctr_xxx custom-limner "Visual compare" --config-json '{"target":"checkout-mobile"}'
+```
+
+Prefer adapter-backed verifiers over manual receipts when tool artifacts should be audited consistently.
 
 ## Closeout Discipline
 

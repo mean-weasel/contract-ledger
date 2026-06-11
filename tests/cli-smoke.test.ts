@@ -6,8 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { createProgram } from '../src/cli.js';
+import packageJson from '../package.json' with { type: 'json' };
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const expectedVersion = `${packageJson.version}\n`;
 
 describe('createProgram', () => {
   it('registers the contract CLI name', () => {
@@ -27,7 +29,7 @@ describe('createProgram', () => {
 
     await program.parseAsync(['version'], { from: 'user' });
 
-    expect(stdout).toBe('0.1.0\n');
+    expect(stdout).toBe(expectedVersion);
   });
 
   it('runs the parser when invoked through a symlinked entrypoint', () => {
@@ -48,7 +50,7 @@ describe('createProgram', () => {
 
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
-      expect(result.stdout).toBe('0.1.0\n');
+      expect(result.stdout).toBe(expectedVersion);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

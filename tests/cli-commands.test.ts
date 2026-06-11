@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -955,6 +955,200 @@ describe('CLI commands', () => {
           status: 'pass',
         });
         expect(statusEvent.command_invocation_id).toMatch(/^cmd_/);
+      });
+    });
+  });
+
+  it('installs the bundled agent skill to a target directory', async () => {
+    await withTempWorkspace(async (root) => {
+      const stdout: string[] = [];
+      const targetDir = path.join(root, 'codex-skill-target');
+
+      await runCli({
+        cwd: root,
+        argv: ['skill-install', '--target-dir', targetDir],
+        stdout,
+      });
+
+      expect(stdout.at(-1)).toBe(`installed ${path.join(targetDir, 'SKILL.md')}`);
+      await expect(readFile(path.join(targetDir, 'SKILL.md'), 'utf8')).resolves.toContain(
+        'name: contract-ledger',
+      );
+
+      await runCli({
+        cwd: root,
+        argv: ['skill-install', '--target-dir', targetDir],
+        stdout,
+      });
+
+      expect(stdout.at(-1)).toBe(`exists ${path.join(targetDir, 'SKILL.md')}`);
+
+      withLedger(root, (ledger) => {
+        const events = ledger.db
+          .prepare(
+            `
+            select event_type
+            from events
+            where scope_type = 'skill'
+            order by created_at, rowid
+          `,
+          )
+          .all() as Array<{ event_type: string }>;
+
+        expect(events.map((event) => event.event_type)).toContain('skill_installed');
+        expect(events.map((event) => event.event_type)).toContain('skill_install_skipped');
+      });
+    });
+  });
+
+  it('shows status next actions and audit logs for a contract', async () => {
+    await withTempWorkspace(async (root) => {
+      const stdout: string[] = [];
+
+      await runCli({
+        cwd: root,
+        argv: ['init', 'Read model demo', '--intent', 'Expose agent-readable state'],
+        stdout,
+      });
+      const contractId = stdout.at(-1)?.trim();
+      expect(contractId).toMatch(/^ctr_/);
+
+      await runCli({
+        cwd: root,
+        argv: [
+          'criteria-add',
+          contractId ?? 'missing',
+          'Read model criterion remains pending.',
+          '--requires',
+          'command',
+        ],
+        stdout,
+      });
+
+      await runCli({
+        cwd: root,
+        argv: ['show', contractId ?? 'missing'],
+        stdout,
+      });
+      const shown = JSON.parse(stdout.at(-1) ?? '{}') as {
+        contract: { id: string; status: string };
+        criteria: Array<{ statement: string }>;
+        closeoutProblems: string[];
+      };
+
+      await runCli({
+        cwd: root,
+        argv: ['status', contractId ?? 'missing'],
+        stdout,
+      });
+      const statuses = JSON.parse(stdout.at(-1) ?? '[]') as Array<{
+        id: string;
+        criteriaPending: number;
+      }>;
+
+      await runCli({
+        cwd: root,
+        argv: ['next', contractId ?? 'missing'],
+        stdout,
+      });
+      const next = JSON.parse(stdout.at(-1) ?? '{}') as {
+        readyToClose: boolean;
+        nextActions: string[];
+      };
+
+      await runCli({
+        cwd: root,
+        argv: ['audit-log', contractId ?? 'missing'],
+        stdout,
+      });
+      const auditLog = JSON.parse(stdout.at(-1) ?? '[]') as Array<{
+        eventType: string;
+        subcommand: string | null;
+      }>;
+
+      expect(shown.contract).toMatchObject({ id: contractId, status: 'draft' });
+      expect(shown.criteria[0]?.statement).toBe('Read model criterion remains pending.');
+      expect(shown.closeoutProblems).toEqual(expect.arrayContaining([expect.stringMatching(/draft/)]));
+      expect(statuses).toEqual([expect.objectContaining({ id: contractId, criteriaPending: 1 })]);
+      expect(next.readyToClose).toBe(false);
+      expect(next.nextActions).toEqual(expect.arrayContaining([expect.stringMatching(/contract accept/)]));
+      expect(auditLog.map((entry) => entry.eventType)).toContain('criterion_added');
+      expect(auditLog.map((entry) => entry.subcommand)).toContain('criteria-add');
+    });
+  });
+
+  it('registers adapters and creates adapter-backed verifiers through the CLI', async () => {
+    await withTempWorkspace(async (root) => {
+      const stdout: string[] = [];
+
+      await runCli({
+        cwd: root,
+        argv: ['init', 'Adapter demo', '--intent', 'Register a custom adapter'],
+        stdout,
+      });
+      const contractId = stdout.at(-1)?.trim();
+      expect(contractId).toMatch(/^ctr_/);
+
+      await runCli({
+        cwd: root,
+        argv: [
+          'adapter-add',
+          'custom-limner',
+          '--kind',
+          'visual_fidelity',
+          '--artifact-patterns-json',
+          '[".limner/runs/*/manifest.json"]',
+          '--receipt-mapper-json',
+          '{"summary":"limner visual receipt"}',
+          '--requires-judgment',
+        ],
+        stdout,
+      });
+      const adapterId = stdout.at(-1)?.trim();
+      expect(adapterId).toMatch(/^adp_/);
+
+      await runCli({
+        cwd: root,
+        argv: [
+          'verifier-add-adapter',
+          contractId ?? 'missing',
+          'custom-limner',
+          'Visual compare',
+          '--config-json',
+          '{"target":"checkout-mobile"}',
+        ],
+        stdout,
+      });
+      const verifierId = stdout.at(-1)?.trim();
+      expect(verifierId).toMatch(/^ver_/);
+
+      withLedger(root, (ledger) => {
+        const adapter = ledger.db
+          .prepare('select name, kind, requires_judgment from verifier_adapters where id = ?')
+          .get(adapterId) as { name: string; kind: string; requires_judgment: number };
+        const verifier = ledger.db
+          .prepare('select adapter_id, kind, config_json from verifiers where id = ?')
+          .get(verifierId) as { adapter_id: string; kind: string; config_json: string };
+        const events = ledger.db
+          .prepare(
+            `
+            select event_type
+            from events
+            where event_type in ('adapter_added', 'verifier_added')
+            order by created_at, rowid
+          `,
+          )
+          .all() as Array<{ event_type: string }>;
+
+        expect(adapter).toEqual({
+          name: 'custom-limner',
+          kind: 'visual_fidelity',
+          requires_judgment: 1,
+        });
+        expect(verifier.adapter_id).toBe(adapterId);
+        expect(verifier.kind).toBe('visual_fidelity');
+        expect(JSON.parse(verifier.config_json)).toEqual({ target: 'checkout-mobile' });
+        expect(events.map((event) => event.event_type)).toEqual(['adapter_added', 'verifier_added']);
       });
     });
   });

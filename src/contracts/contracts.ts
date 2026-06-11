@@ -191,130 +191,7 @@ export function closeContract(ledger: Ledger, input: CloseContractInput): CloseC
     clock,
   });
 
-  const problems: string[] = [];
-
-  if (!['accepted', 'active'].includes(existing.status)) {
-    problems.push(`Contract must be accepted or active before closeout: ${existing.status}`);
-  }
-
-  const openCriteria = ledger.db
-    .prepare(
-      `
-      select id, status
-      from criteria
-      where contract_id = ?
-        and status not in ('satisfied', 'deferred', 'rejected')
-      order by created_at, rowid
-    `,
-    )
-    .all(input.contractId) as Array<{ id: string; status: string }>;
-
-  if (openCriteria.length > 0) {
-    const labels = openCriteria.map((criterion) => `${criterion.id} (${criterion.status})`);
-    problems.push(`Pending criteria must be satisfied, deferred, or rejected: ${labels.join(', ')}`);
-  }
-
-  const weakTerminalCriteria = ledger.db
-    .prepare(
-      `
-      select id, status
-      from criteria
-      where contract_id = ?
-        and status in ('deferred', 'rejected')
-        and (
-          trim(coalesce(rationale, '')) = ''
-          or trim(coalesce(residual_risk, '')) = ''
-        )
-      order by created_at, rowid
-    `,
-    )
-    .all(input.contractId) as Array<{ id: string; status: string }>;
-
-  if (weakTerminalCriteria.length > 0) {
-    const labels = weakTerminalCriteria.map(
-      (criterion) => `${criterion.id} (${criterion.status})`,
-    );
-    problems.push(
-      `Deferred or rejected criteria require non-empty rationale and residual risk: ${labels.join(
-        ', ',
-      )}`,
-    );
-  }
-
-  const unprovedCriteria = ledger.db
-    .prepare(
-      `
-      select criteria.id
-      from criteria
-      where criteria.contract_id = ?
-        and criteria.status = 'satisfied'
-        and not exists (
-          select 1
-          from receipts
-          where receipts.contract_id = criteria.contract_id
-            and receipts.criterion_id = criteria.id
-            and receipts.status = 'pass'
-        )
-      order by criteria.created_at, criteria.rowid
-    `,
-    )
-    .all(input.contractId) as Array<{ id: string }>;
-
-  if (unprovedCriteria.length > 0) {
-    problems.push(
-      `Satisfied criteria missing a passing receipt: ${unprovedCriteria
-        .map((criterion) => criterion.id)
-        .join(', ')}`,
-    );
-  }
-
-  const unprovedVerifiers = ledger.db
-    .prepare(
-      `
-      select id
-      from verifiers
-      where contract_id = ?
-        and required = 1
-        and not exists (
-          select 1
-          from receipts
-          where receipts.contract_id = verifiers.contract_id
-            and receipts.verifier_id = verifiers.id
-            and receipts.status = 'pass'
-        )
-      order by created_at, rowid
-    `,
-    )
-    .all(input.contractId) as Array<{ id: string }>;
-
-  if (unprovedVerifiers.length > 0) {
-    problems.push(
-      `Required verifiers missing a passing verifier receipt: ${unprovedVerifiers
-        .map((verifier) => verifier.id)
-        .join(', ')}`,
-    );
-  }
-
-  const pendingFailureModes = ledger.db
-    .prepare(
-      `
-      select id
-      from failure_modes
-      where contract_id = ?
-        and required = 1
-        and status = 'pending'
-      order by created_at, rowid
-    `,
-    )
-    .all(input.contractId) as Array<{ id: string }>;
-
-  if (pendingFailureModes.length > 0) {
-    problems.push(
-      `Required failure modes are still pending: ${pendingFailureModes
-        .map((failureMode) => failureMode.id)
-        .join(', ')}`,
-    );
-  }
+  const problems = assessCloseoutReadiness(ledger, input.contractId);
 
   if (problems.length > 0) {
     return { ok: false, problems };
@@ -349,6 +226,141 @@ export function closeContract(ledger: Ledger, input: CloseContractInput): CloseC
   }
 
   return { ok: true, problems: [] };
+}
+
+export function assessCloseoutReadiness(ledger: Ledger, contractId: string): string[] {
+  const existing = getContract(ledger, contractId);
+
+  if (existing === undefined) {
+    throw new Error(`Contract not found: ${contractId}`);
+  }
+
+  const problems: string[] = [];
+
+  if (!['accepted', 'active'].includes(existing.status)) {
+    problems.push(`Contract must be accepted or active before closeout: ${existing.status}`);
+  }
+
+  const openCriteria = ledger.db
+    .prepare(
+      `
+      select id, status
+      from criteria
+      where contract_id = ?
+        and status not in ('satisfied', 'deferred', 'rejected')
+      order by created_at, rowid
+    `,
+    )
+    .all(contractId) as Array<{ id: string; status: string }>;
+
+  if (openCriteria.length > 0) {
+    const labels = openCriteria.map((criterion) => `${criterion.id} (${criterion.status})`);
+    problems.push(`Pending criteria must be satisfied, deferred, or rejected: ${labels.join(', ')}`);
+  }
+
+  const weakTerminalCriteria = ledger.db
+    .prepare(
+      `
+      select id, status
+      from criteria
+      where contract_id = ?
+        and status in ('deferred', 'rejected')
+        and (
+          trim(coalesce(rationale, '')) = ''
+          or trim(coalesce(residual_risk, '')) = ''
+        )
+      order by created_at, rowid
+    `,
+    )
+    .all(contractId) as Array<{ id: string; status: string }>;
+
+  if (weakTerminalCriteria.length > 0) {
+    const labels = weakTerminalCriteria.map(
+      (criterion) => `${criterion.id} (${criterion.status})`,
+    );
+    problems.push(
+      `Deferred or rejected criteria require non-empty rationale and residual risk: ${labels.join(
+        ', ',
+      )}`,
+    );
+  }
+
+  const unprovedCriteria = ledger.db
+    .prepare(
+      `
+      select criteria.id
+      from criteria
+      where criteria.contract_id = ?
+        and criteria.status = 'satisfied'
+        and not exists (
+          select 1
+          from receipts
+          where receipts.contract_id = criteria.contract_id
+            and receipts.criterion_id = criteria.id
+            and receipts.status = 'pass'
+        )
+      order by criteria.created_at, criteria.rowid
+    `,
+    )
+    .all(contractId) as Array<{ id: string }>;
+
+  if (unprovedCriteria.length > 0) {
+    problems.push(
+      `Satisfied criteria missing a passing receipt: ${unprovedCriteria
+        .map((criterion) => criterion.id)
+        .join(', ')}`,
+    );
+  }
+
+  const unprovedVerifiers = ledger.db
+    .prepare(
+      `
+      select id
+      from verifiers
+      where contract_id = ?
+        and required = 1
+        and not exists (
+          select 1
+          from receipts
+          where receipts.contract_id = verifiers.contract_id
+            and receipts.verifier_id = verifiers.id
+            and receipts.status = 'pass'
+        )
+      order by created_at, rowid
+    `,
+    )
+    .all(contractId) as Array<{ id: string }>;
+
+  if (unprovedVerifiers.length > 0) {
+    problems.push(
+      `Required verifiers missing a passing verifier receipt: ${unprovedVerifiers
+        .map((verifier) => verifier.id)
+        .join(', ')}`,
+    );
+  }
+
+  const pendingFailureModes = ledger.db
+    .prepare(
+      `
+      select id
+      from failure_modes
+      where contract_id = ?
+        and required = 1
+        and status = 'pending'
+      order by created_at, rowid
+    `,
+    )
+    .all(contractId) as Array<{ id: string }>;
+
+  if (pendingFailureModes.length > 0) {
+    problems.push(
+      `Required failure modes are still pending: ${pendingFailureModes
+        .map((failureMode) => failureMode.id)
+        .join(', ')}`,
+    );
+  }
+
+  return problems;
 }
 
 export function getContract(ledger: Ledger, contractId: string): ContractRecord | undefined {

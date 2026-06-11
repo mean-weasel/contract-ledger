@@ -41,6 +41,8 @@ contract todo-add ctr_xxx "Verify premium export is hidden"
 ver_id=$(contract verifier-add-command ctr_xxx billing-tests -- npm test -- billing)
 contract failure-modes-add ctr_xxx "Tests pass but browser state fails" --why "No browser proof exists" --check "Run a smoke check"
 contract receipt-run ctr_xxx --criterion "$crit_id" --verifier "$ver_id" -- npm test -- billing
+contract next ctr_xxx
+contract show ctr_xxx
 contract export ctr_xxx
 contract close ctr_xxx
 ```
@@ -88,8 +90,25 @@ Read-only helpers:
 ```bash
 npm run dev -- adapter-list
 npm run dev -- profile-list
+npm run dev -- status
+npm run dev -- show ctr_xxx
+npm run dev -- next ctr_xxx
+npm run dev -- audit-log ctr_xxx
 npm run dev -- failure-modes-list ctr_xxx
 npm run dev -- audit-weak-closeouts
+```
+
+Agent skill install:
+
+```bash
+contract skill-install
+```
+
+Adapter hook example:
+
+```bash
+contract adapter-add custom-limner --kind visual_fidelity --artifact-patterns-json '[".limner/runs/*/manifest.json"]' --requires-judgment
+contract verifier-add-adapter ctr_xxx custom-limner "Visual compare" --config-json '{"target":"checkout-mobile"}'
 ```
 
 After building, the installed binary is `contract`:

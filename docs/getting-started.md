@@ -112,6 +112,47 @@ contract close ctr_xxx
 If closeout is blocked, the CLI prints the missing proof. Add or fix receipts,
 resolve failure modes, and run `contract close ctr_xxx` again.
 
+## Agent Read Commands
+
+Agents can inspect the ledger before deciding what to do next:
+
+```bash
+contract status
+contract show ctr_xxx
+contract next ctr_xxx
+contract audit-log ctr_xxx
+```
+
+`contract show` returns the contract, criteria, todos, verifiers, failure modes,
+receipts, and closeout problems as JSON. `contract next` returns the remaining
+actions needed before closeout. `contract audit-log` returns event history with
+command invocation linkage.
+
+## Agent Skill
+
+The npm package includes a Codex skill at `skills/contract-ledger/SKILL.md`.
+Install it into the default Codex skills directory with:
+
+```bash
+contract skill-install
+```
+
+Use `--target-dir <path>` for a custom skill directory and `--overwrite` to
+replace an existing installed copy.
+
+## Adapter Hooks
+
+Register custom verifier adapters when tools like Limner need structured
+acceptance metadata without being hard-coded into the core CLI:
+
+```bash
+contract adapter-add custom-limner --kind visual_fidelity --artifact-patterns-json '[".limner/runs/*/manifest.json"]' --requires-judgment
+contract verifier-add-adapter ctr_xxx custom-limner "Visual compare" --config-json '{"target":"checkout-mobile"}'
+```
+
+Adapter registration, adapter listing, and adapter-backed verifier creation are
+audited in `.contracts/ledger.sqlite`.
+
 ## Package And GitHub Release Path
 
 Contract Ledger is packaged as `@mean-weasel/contract-ledger` on npm. The npm

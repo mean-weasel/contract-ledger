@@ -12,6 +12,12 @@ import {
 import { weakCloseoutReport } from './audits/reports.js';
 import { acceptContract, closeContract, createContract } from './contracts/contracts.js';
 import {
+  getContractSnapshot,
+  getNextActionReport,
+  listAuditLog,
+  listContractStatuses,
+} from './contracts/views.js';
+import {
   addCriterion,
   updateCriterionStatus,
   type CriterionStatus,
@@ -25,10 +31,17 @@ import {
   type FailureModeResolutionStatus,
 } from './failure-modes/failure-modes.js';
 import { addReceipt, runCommandReceipt, type ReceiptStatus } from './receipts/receipts.js';
+import { installContractLedgerSkill } from './skills/install.js';
 import { addTodo } from './todos/todos.js';
-import { addVerifier, listAdapters, listProfiles } from './verifiers/verifiers.js';
+import {
+  addVerifier,
+  getAdapterByNameOrId,
+  listAdapters,
+  listProfiles,
+  registerAdapter,
+} from './verifiers/verifiers.js';
 
-const cliVersion = '0.1.0';
+const cliVersion = '0.1.3';
 
 export type ProgramDeps = {
   cwd?: string;
@@ -144,6 +157,14 @@ function parseFailureModeStatus(status: string): FailureModeResolutionStatus {
   }
 
   throw new Error(`Invalid failure mode status: ${status}`);
+}
+
+function parseJsonOption(value: string, label: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    throw new Error(`${label} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function usingLedger<T>(cwd: string, fn: (ledger: Ledger) => T): T {
@@ -274,6 +295,50 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     });
 
   program
+    .command('skill-install')
+    .description('Install the bundled Contract Ledger Codex skill')
+    .option('--target-dir <path>', 'Directory that should contain the installed SKILL.md')
+    .option('--overwrite', 'Overwrite an existing installed skill')
+    .action(
+      async (options: {
+        targetDir?: string;
+        overwrite?: boolean;
+      }) => {
+        await audited(
+          {
+            cwd,
+            actor,
+            argv: getInvocationArgv(deps, program),
+            subcommand: 'skill-install',
+            scopeType: 'skill',
+          },
+          () => {
+            const result = installContractLedgerSkill({
+              targetDir: options.targetDir,
+              overwrite: options.overwrite === true,
+            });
+
+            usingLedger(cwd, (ledger) => {
+              recordEvent(ledger, {
+                scopeType: 'skill',
+                scopeId: 'contract-ledger',
+                actor,
+                eventType: result.installed ? 'skill_installed' : 'skill_install_skipped',
+                payload: {
+                  targetPath: result.targetPath,
+                  sourcePath: result.sourcePath,
+                  overwrite: options.overwrite === true,
+                },
+              });
+            });
+
+            emit(result.installed ? `installed ${result.targetPath}` : `exists ${result.targetPath}`);
+          },
+        );
+      },
+    );
+
+  program
     .command('init')
     .description('Create a draft contract')
     .argument('<title>')
@@ -328,6 +393,86 @@ export function createProgram(deps: ProgramDeps = {}): Command {
         () => {
           const contract = usingLedger(cwd, (ledger) => acceptContract(ledger, { contractId, actor }));
           emit(`${contract.id} ${contract.status}`);
+        },
+      );
+    });
+
+  program
+    .command('show')
+    .description('Show a contract with criteria, todos, verifiers, failure modes, receipts, and closeout problems')
+    .argument('<contractId>')
+    .action(async (contractId: string) => {
+      await audited(
+        {
+          cwd,
+          actor,
+          argv: getInvocationArgv(deps, program),
+          subcommand: 'show',
+          scopeType: 'contract',
+          scopeId: contractId,
+        },
+        () => {
+          emit(JSON.stringify(usingLedger(cwd, (ledger) => getContractSnapshot(ledger, contractId)), null, 2));
+        },
+      );
+    });
+
+  program
+    .command('status')
+    .description('Show contract status summaries')
+    .argument('[contractId]')
+    .action(async (contractId: string | undefined) => {
+      await audited(
+        {
+          cwd,
+          actor,
+          argv: getInvocationArgv(deps, program),
+          subcommand: 'status',
+          scopeType: contractId === undefined ? 'workspace' : 'contract',
+          scopeId: contractId,
+        },
+        () => {
+          emit(JSON.stringify(usingLedger(cwd, (ledger) => listContractStatuses(ledger, contractId)), null, 2));
+        },
+      );
+    });
+
+  program
+    .command('next')
+    .description('Show the next actions needed before closeout')
+    .argument('<contractId>')
+    .action(async (contractId: string) => {
+      await audited(
+        {
+          cwd,
+          actor,
+          argv: getInvocationArgv(deps, program),
+          subcommand: 'next',
+          scopeType: 'contract',
+          scopeId: contractId,
+        },
+        () => {
+          emit(JSON.stringify(usingLedger(cwd, (ledger) => getNextActionReport(ledger, contractId)), null, 2));
+        },
+      );
+    });
+
+  program
+    .command('audit-log')
+    .description('Show audit events for a contract or workspace')
+    .argument('[contractId]')
+    .action(async (contractId: string | undefined) => {
+      await audited(
+        {
+          cwd,
+          actor,
+          argv: getInvocationArgv(deps, program),
+          subcommand: 'audit-log',
+          scopeType: contractId === undefined ? 'workspace' : 'contract',
+          scopeId: contractId,
+        },
+        () => {
+          emit(JSON.stringify(usingLedger(cwd, (ledger) => listAuditLog(ledger, contractId)), null, 2));
         },
       );
     });
@@ -477,6 +622,111 @@ export function createProgram(deps: ProgramDeps = {}): Command {
                 actor,
               }),
             );
+            emit(verifier.id);
+          },
+        );
+      },
+    );
+
+  program
+    .command('adapter-add')
+    .description('Register or update a verifier adapter')
+    .argument('<name>')
+    .requiredOption('--kind <kind>', 'Adapter kind, such as command, visual, browser, or coverage')
+    .option('--version <version>', 'Adapter version', '1')
+    .option('--status <status>', 'Adapter status', 'active')
+    .option('--config-schema-json <json>', 'Adapter config schema JSON', '{}')
+    .option('--artifact-patterns-json <json>', 'Adapter artifact patterns JSON array', '[]')
+    .option('--receipt-mapper-json <json>', 'Adapter receipt mapper JSON', '{}')
+    .option('--requires-judgment', 'Mark receipts from this adapter as requiring judgment')
+    .action(
+      async (
+        name: string,
+        options: {
+          kind: string;
+          version: string;
+          status: string;
+          configSchemaJson: string;
+          artifactPatternsJson: string;
+          receiptMapperJson: string;
+          requiresJudgment?: boolean;
+        },
+      ) => {
+        await audited(
+          {
+            cwd,
+            actor,
+            argv: getInvocationArgv(deps, program),
+            subcommand: 'adapter-add',
+            scopeType: 'adapter',
+          },
+          () => {
+            const adapter = usingLedger(cwd, (ledger) =>
+              registerAdapter(ledger, {
+                name,
+                version: options.version,
+                kind: options.kind,
+                status: options.status,
+                configSchema: parseJsonOption(options.configSchemaJson, '--config-schema-json'),
+                artifactPatterns: parseJsonOption(options.artifactPatternsJson, '--artifact-patterns-json'),
+                receiptMapper: parseJsonOption(options.receiptMapperJson, '--receipt-mapper-json'),
+                requiresJudgment: options.requiresJudgment === true,
+                actor,
+              }),
+            );
+            emit(adapter.id);
+          },
+        );
+      },
+    );
+
+  program
+    .command('verifier-add-adapter')
+    .description('Add a verifier using a registered adapter')
+    .argument('<contractId>')
+    .argument('<adapter>')
+    .argument('<name>')
+    .requiredOption('--config-json <json>', 'Verifier config JSON')
+    .option('--criterion <criterionId>', 'Criterion this verifier proves')
+    .option('--optional', 'Do not require this verifier for closeout')
+    .action(
+      async (
+        contractId: string,
+        adapterNameOrId: string,
+        name: string,
+        options: {
+          configJson: string;
+          criterion?: string;
+          optional?: boolean;
+        },
+      ) => {
+        await audited(
+          {
+            cwd,
+            actor,
+            argv: getInvocationArgv(deps, program),
+            subcommand: 'verifier-add-adapter',
+            scopeType: 'contract',
+            scopeId: contractId,
+          },
+          () => {
+            const verifier = usingLedger(cwd, (ledger) => {
+              const adapter = getAdapterByNameOrId(ledger, adapterNameOrId);
+              if (adapter === undefined) {
+                throw new Error(`Adapter not found: ${adapterNameOrId}`);
+              }
+
+              return addVerifier(ledger, {
+                contractId,
+                criterionId: options.criterion,
+                adapterId: adapter.id,
+                name,
+                kind: adapter.kind,
+                config: parseJsonOption(options.configJson, '--config-json'),
+                required: options.optional !== true,
+                actor,
+              });
+            });
             emit(verifier.id);
           },
         );
