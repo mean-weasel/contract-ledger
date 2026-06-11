@@ -11,7 +11,11 @@ import {
 } from './audit/audit.js';
 import { weakCloseoutReport } from './audits/reports.js';
 import { acceptContract, closeContract, createContract } from './contracts/contracts.js';
-import { addCriterion } from './criteria/criteria.js';
+import {
+  addCriterion,
+  updateCriterionStatus,
+  type CriterionStatus,
+} from './criteria/criteria.js';
 import { openLedger, type Ledger } from './db/connection.js';
 import { exportContractMarkdown } from './exports/markdown.js';
 import {
@@ -81,12 +85,52 @@ function assertChildCommandSeparator(
   }
 }
 
+function assertReceiptRunSeparator(argv: string[]): void {
+  const commandIndex = argv.indexOf('receipt-run');
+  if (commandIndex < 0) {
+    throw new Error('receipt-run requires "--" before the child command: receipt-run <contractId> [options] -- <command...>');
+  }
+
+  for (let index = commandIndex + 2; index < argv.length; index += 1) {
+    const item = argv[index];
+    if (item === '--') {
+      return;
+    }
+
+    if (item === '--criterion' || item === '--verifier') {
+      index += 1;
+      continue;
+    }
+
+    throw new Error(
+      'receipt-run requires "--" before the child command: receipt-run <contractId> [options] -- <command...>',
+    );
+  }
+
+  throw new Error(
+    'receipt-run requires "--" before the child command: receipt-run <contractId> [options] -- <command...>',
+  );
+}
+
 function parseStatus(status: string): ReceiptStatus {
   if (status === 'pass' || status === 'fail' || status === 'inconclusive') {
     return status;
   }
 
   throw new Error(`Invalid receipt status: ${status}`);
+}
+
+function parseCriterionStatus(status: string): CriterionStatus {
+  if (
+    status === 'pending' ||
+    status === 'satisfied' ||
+    status === 'deferred' ||
+    status === 'rejected'
+  ) {
+    return status;
+  }
+
+  throw new Error(`Invalid criterion status: ${status}`);
 }
 
 function parseFailureModeStatus(status: string): FailureModeResolutionStatus {
@@ -326,6 +370,48 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     );
 
   program
+    .command('criteria-set-status')
+    .description('Set an acceptance criterion status')
+    .argument('<criterionId>')
+    .requiredOption('--status <status>', 'pending, satisfied, deferred, or rejected')
+    .option('--rationale <rationale>', 'Rationale for deferred or rejected criteria')
+    .option('--residual-risk <risk>', 'Residual risk for deferred or rejected criteria')
+    .action(
+      async (
+        criterionId: string,
+        options: {
+          status: string;
+          rationale?: string;
+          residualRisk?: string;
+        },
+        command: Command,
+      ) => {
+        await audited(
+          {
+            cwd,
+            actor,
+            argv: getInvocationArgv(deps, program),
+            subcommand: 'criteria-set-status',
+            scopeType: 'criterion',
+            scopeId: criterionId,
+          },
+          () => {
+            const criterion = usingLedger(cwd, (ledger) =>
+              updateCriterionStatus(ledger, {
+                id: criterionId,
+                status: parseCriterionStatus(options.status),
+                rationale: options.rationale,
+                residualRisk: options.residualRisk,
+                actor,
+              }),
+            );
+            emit(`${criterion.id} ${criterion.status}`);
+          },
+        );
+      },
+    );
+
+  program
     .command('todo-add')
     .description('Add a todo for a contract')
     .argument('<contractId>')
@@ -535,10 +621,17 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .argument('<contractId>')
     .requiredOption('--summary <summary>', 'Receipt summary')
     .requiredOption('--status <status>', 'pass, fail, or inconclusive')
+    .option('--criterion <criterionId>', 'Criterion proven by this receipt')
+    .option('--verifier <verifierId>', 'Verifier proven by this receipt')
     .action(
       async (
         contractId: string,
-        options: { summary: string; status: string },
+        options: {
+          summary: string;
+          status: string;
+          criterion?: string;
+          verifier?: string;
+        },
         command: Command,
       ) => {
         await audited(
@@ -554,6 +647,8 @@ export function createProgram(deps: ProgramDeps = {}): Command {
             const receipt = usingLedger(cwd, (ledger) =>
               addReceipt(ledger, {
                 contractId,
+                criterionId: options.criterion,
+                verifierId: options.verifier,
                 kind: 'manual',
                 status: parseStatus(options.status),
                 summary: options.summary,
@@ -571,8 +666,14 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .description('Run a command and record its receipt')
     .allowUnknownOption(true)
     .argument('<contractId>')
+    .option('--criterion <criterionId>', 'Criterion proven by this receipt')
+    .option('--verifier <verifierId>', 'Verifier proven by this receipt')
     .argument('[command...]')
-    .action(async (contractId: string, commandArgs: string[] | undefined, command: Command) => {
+    .action(async (
+      contractId: string,
+      commandArgs: string[] | undefined,
+      options: { criterion?: string; verifier?: string },
+    ) => {
       const argv = getInvocationArgv(deps, program);
       await audited(
         {
@@ -584,12 +685,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           scopeId: contractId,
         },
         async () => {
-          assertChildCommandSeparator(
-            argv,
-            'receipt-run',
-            1,
-            'receipt-run <contractId> -- <command...>',
-          );
+          assertReceiptRunSeparator(argv);
           const [bin, ...args] = commandArgs ?? [];
           if (bin === undefined) {
             throw new Error('receipt-run requires a command');
@@ -598,6 +694,8 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           const receipt = await usingLedgerAsync(cwd, (ledger) =>
             runCommandReceipt(ledger, {
               contractId,
+              criterionId: options.criterion,
+              verifierId: options.verifier,
               command: bin,
               args,
               actor,

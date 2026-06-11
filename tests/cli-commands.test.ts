@@ -536,7 +536,7 @@ describe('CLI commands', () => {
         expect(JSON.parse(completion.payload_json)).toMatchObject({
           status: 'failed',
           error:
-            'receipt-run requires "--" before the child command: receipt-run <contractId> -- <command...>',
+            'receipt-run requires "--" before the child command: receipt-run <contractId> [options] -- <command...>',
         });
       });
     });
@@ -605,7 +605,7 @@ describe('CLI commands', () => {
         expect(JSON.parse(completion.payload_json)).toMatchObject({
           status: 'failed',
           error:
-            'receipt-run requires "--" before the child command: receipt-run <contractId> -- <command...>',
+            'receipt-run requires "--" before the child command: receipt-run <contractId> [options] -- <command...>',
         });
         expect(receipts.count).toBe(0);
       });
@@ -840,6 +840,121 @@ describe('CLI commands', () => {
             'verifier-add-command requires "--" before the child command: verifier-add-command <contractId> <name> -- <command...>',
         });
         expect(verifiers.count).toBe(0);
+      });
+    });
+  });
+
+  it('supports a CLI-only closeout path with linked criterion and verifier receipts', async () => {
+    await withTempWorkspace(async (root) => {
+      const stdout: string[] = [];
+
+      await runCli({
+        cwd: root,
+        argv: ['init', 'Closeable CLI contract', '--intent', 'Prove closeout path'],
+        stdout,
+      });
+      const contractId = stdout.at(-1)?.trim();
+      expect(contractId).toMatch(/^ctr_/);
+
+      await runCli({
+        cwd: root,
+        argv: ['accept', contractId ?? 'missing'],
+        stdout,
+      });
+
+      await runCli({
+        cwd: root,
+        argv: [
+          'criteria-add',
+          contractId ?? 'missing',
+          'The CLI can close a criterion-backed contract',
+          '--requires',
+          'manual',
+        ],
+        stdout,
+      });
+      const criterionId = stdout.at(-1)?.trim();
+      expect(criterionId).toMatch(/^crit_/);
+
+      await runCli({
+        cwd: root,
+        argv: ['criteria-set-status', criterionId ?? 'missing', '--status', 'satisfied'],
+        stdout,
+      });
+
+      await runCli({
+        cwd: root,
+        argv: [
+          'verifier-add-command',
+          contractId ?? 'missing',
+          'manual-proof-review',
+          '--',
+          'node',
+          '-e',
+          "console.log('proof')",
+        ],
+        stdout,
+      });
+      const verifierId = stdout.at(-1)?.trim();
+      expect(verifierId).toMatch(/^ver_/);
+
+      await runCli({
+        cwd: root,
+        argv: [
+          'receipt-add',
+          contractId ?? 'missing',
+          '--criterion',
+          criterionId ?? 'missing',
+          '--verifier',
+          verifierId ?? 'missing',
+          '--summary',
+          'Manual proof reviewed against the required verifier.',
+          '--status',
+          'pass',
+        ],
+        stdout,
+      });
+      const receiptId = stdout.at(-1)?.trim();
+      expect(receiptId).toMatch(/^rec_/);
+
+      await runCli({
+        cwd: root,
+        argv: ['close', contractId ?? 'missing'],
+        stdout,
+      });
+
+      expect(stdout.at(-1)).toBe(`${contractId} closed`);
+
+      withLedger(root, (ledger) => {
+        const contract = ledger.db
+          .prepare('select status from contracts where id = ?')
+          .get(contractId) as { status: string };
+        const receipt = ledger.db
+          .prepare(
+            `
+            select criterion_id, verifier_id, status
+            from receipts
+            where id = ?
+          `,
+          )
+          .get(receiptId) as { criterion_id: string; verifier_id: string; status: string };
+        const statusEvent = ledger.db
+          .prepare(
+            `
+            select command_invocation_id
+            from events
+            where event_type = 'criterion_status_changed'
+          `,
+          )
+          .get() as { command_invocation_id: string | null };
+
+        expect(contract.status).toBe('closed');
+        expect(receipt).toEqual({
+          criterion_id: criterionId,
+          verifier_id: verifierId,
+          status: 'pass',
+        });
+        expect(statusEvent.command_invocation_id).toMatch(/^cmd_/);
       });
     });
   });

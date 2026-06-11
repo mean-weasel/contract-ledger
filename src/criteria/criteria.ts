@@ -17,6 +17,21 @@ export type CriterionRecord = {
   status: string;
 };
 
+export type CriterionStatus = 'pending' | 'satisfied' | 'deferred' | 'rejected';
+
+export type UpdateCriterionStatusInput = {
+  id: string;
+  status: CriterionStatus;
+  rationale?: string;
+  residualRisk?: string;
+  actor: string;
+  clock?: Clock;
+};
+
+type CriterionContractRow = {
+  contract_id: string;
+};
+
 export function addCriterion(ledger: Ledger, input: AddCriterionInput): CriterionRecord {
   const id = createId('crit');
   const status = 'pending';
@@ -72,4 +87,61 @@ export function addCriterion(ledger: Ledger, input: AddCriterionInput): Criterio
   });
 
   return { id, status };
+}
+
+export function updateCriterionStatus(
+  ledger: Ledger,
+  input: UpdateCriterionStatusInput,
+): CriterionRecord {
+  const clock = input.clock ?? systemClock;
+  const contract = ledger.db
+    .prepare('select contract_id from criteria where id = ?')
+    .get(input.id) as CriterionContractRow | undefined;
+
+  if (contract === undefined) {
+    throw new Error(`Criterion not found: ${input.id}`);
+  }
+
+  if (
+    (input.status === 'deferred' || input.status === 'rejected') &&
+    ((input.rationale ?? '').trim() === '' || (input.residualRisk ?? '').trim() === '')
+  ) {
+    throw new Error(`${input.status} criteria require rationale and residual risk`);
+  }
+
+  ledger.db
+    .prepare(
+      `
+      update criteria
+      set
+        status = @status,
+        rationale = @rationale,
+        residual_risk = @residualRisk,
+        satisfied_at = @satisfiedAt
+      where id = @id
+    `,
+    )
+    .run({
+      id: input.id,
+      status: input.status,
+      rationale: input.rationale ?? null,
+      residualRisk: input.residualRisk ?? null,
+      satisfiedAt: input.status === 'satisfied' ? clock.now() : null,
+    });
+
+  recordEvent(ledger, {
+    contractId: contract.contract_id,
+    scopeType: 'criterion',
+    scopeId: input.id,
+    actor: input.actor,
+    eventType: 'criterion_status_changed',
+    payload: {
+      status: input.status,
+      rationale: input.rationale ?? null,
+      residualRisk: input.residualRisk ?? null,
+    },
+    clock,
+  });
+
+  return { id: input.id, status: input.status };
 }

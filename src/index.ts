@@ -7,7 +7,7 @@ export {
 } from './audit/audit.js';
 export { acceptContract, closeContract, createContract, getContract } from './contracts/contracts.js';
 export { weakCloseoutReport } from './audits/reports.js';
-export { addCriterion } from './criteria/criteria.js';
+export { addCriterion, updateCriterionStatus } from './criteria/criteria.js';
 export { openLedger } from './db/connection.js';
 export { exportContractMarkdown } from './exports/markdown.js';
 export {

@@ -17,11 +17,12 @@ During development, run the CLI with `npm run dev --`:
 ```bash
 npm run dev -- init "Fix billing settings regression" --intent "Canceled users cannot access premium export" --scope "Billing settings"
 npm run dev -- accept ctr_xxx
-npm run dev -- criteria-add ctr_xxx "Canceled users cannot access premium export" --requires command
+crit_id=$(npm run --silent dev -- criteria-add ctr_xxx "Canceled users cannot access premium export" --requires command)
+npm run dev -- criteria-set-status "$crit_id" --status satisfied
 npm run dev -- todo-add ctr_xxx "Verify premium export is hidden"
-npm run dev -- verifier-add-command ctr_xxx billing-tests -- npm test -- billing
+ver_id=$(npm run --silent dev -- verifier-add-command ctr_xxx billing-tests -- npm test -- billing)
 npm run dev -- failure-modes-add ctr_xxx "Tests pass but browser state fails" --why "No browser proof exists" --check "Run a smoke check"
-npm run dev -- receipt-add ctr_xxx --summary "Reviewed command output and browser state" --status pass
+npm run dev -- receipt-add ctr_xxx --criterion "$crit_id" --verifier "$ver_id" --summary "Reviewed command output and browser state" --status pass
 npm run dev -- receipt-run ctr_xxx -- node -e "console.log('proof')"
 npm run dev -- export ctr_xxx
 npm run dev -- close ctr_xxx
@@ -31,6 +32,12 @@ Use `--` before child commands for `receipt-run` and
 `verifier-add-command`. That pass-through marker keeps child flags such as
 `node -e` or nested separators such as `npm test -- billing` attached to the
 child command instead of being parsed as Contract Ledger options.
+
+`receipt-run` can also link command evidence directly to closeout gates:
+
+```bash
+npm run dev -- receipt-run ctr_xxx --criterion crit_xxx --verifier ver_xxx -- npm test -- billing
+```
 
 Read-only helpers:
 
