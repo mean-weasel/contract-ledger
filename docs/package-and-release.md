@@ -60,7 +60,7 @@ with `npm pack --dry-run`.
 
 `.github/workflows/release.yml` is gated to explicit operator actions:
 
-- publish a GitHub Release, or
+- push a `v*` tag that matches `package.json`, or
 - run the workflow manually and type `publish-npm`.
 
 The workflow uses npm trusted publishing through GitHub OIDC and publishes with
@@ -84,8 +84,8 @@ Before the first npm publish, an npm package owner must:
    rules match the release policy.
 4. Run `npm run check` and `npm pack --dry-run` locally and inspect the package
    file list.
-5. Create a GitHub Release or manually dispatch the release workflow with
-   `publish-npm`.
+5. Publish by pushing a version tag that matches `package.json`, for example
+   `v0.1.0`, or manually dispatch the release workflow with `publish-npm`.
 
 Do not publish from a workstation unless the GitHub trusted publishing path is
 unavailable and the operator has approved a different release policy.

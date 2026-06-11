@@ -113,10 +113,10 @@ npm pack --dry-run
 ```
 
 GitHub CI runs the same check and dry-run pack verification on pushes and pull
-requests. npm publishing is gated through the GitHub Release workflow, which
-uses npm trusted publishing and provenance. The workflow only publishes after an
-explicit GitHub Release or a manual dispatch that confirms `publish-npm`; it
-does not publish to GitHub Packages.
+requests. npm publishing is gated through the release workflow, which uses npm
+trusted publishing and provenance. The workflow only publishes after a pushed
+`v*` tag that matches `package.json` or a manual dispatch that confirms
+`publish-npm`; it does not publish to GitHub Packages.
 
 Operator handoff steps and expected `npm pack` contents are documented in
 `docs/package-and-release.md`.
