@@ -1096,6 +1096,8 @@ describe('CLI commands', () => {
           'custom-limner',
           '--kind',
           'visual_fidelity',
+          '--adapter-version',
+          '2',
           '--source-type',
           'github',
           '--source-name',
@@ -1160,6 +1162,7 @@ describe('CLI commands', () => {
             `
             select
               name,
+              version,
               kind,
               requires_judgment,
               source_type,
@@ -1177,6 +1180,7 @@ describe('CLI commands', () => {
           )
           .get(adapterId) as {
           name: string;
+          version: string;
           kind: string;
           requires_judgment: number;
           source_type: string;
@@ -1205,6 +1209,7 @@ describe('CLI commands', () => {
 
         expect(adapter).toMatchObject({
           name: 'custom-limner',
+          version: '2',
           kind: 'visual_fidelity',
           requires_judgment: 1,
           source_type: 'github',

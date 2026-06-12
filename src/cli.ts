@@ -41,7 +41,7 @@ import {
   registerAdapter,
 } from './verifiers/verifiers.js';
 
-const cliVersion = '0.1.4';
+const cliVersion = '0.1.5';
 
 export type ProgramDeps = {
   cwd?: string;
@@ -633,7 +633,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .description('Register or update a verifier adapter')
     .argument('<name>')
     .requiredOption('--kind <kind>', 'Adapter kind, such as command, visual, browser, or coverage')
-    .option('--version <version>', 'Adapter version', '1')
+    .option('--adapter-version <version>', 'Adapter definition version', '1')
     .option('--status <status>', 'Adapter status', 'active')
     .option('--source-type <type>', 'Adapter source type, such as builtin, npm, github, local, binary, docker, python, go, mcp, or manual', '')
     .option('--source-name <name>', 'Adapter source name, package name, binary name, repo name, or plugin name', '')
@@ -653,7 +653,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
         name: string,
         options: {
           kind: string;
-          version: string;
+          adapterVersion: string;
           status: string;
           sourceType: string;
           sourceName: string;
@@ -682,7 +682,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
             const adapter = usingLedger(cwd, (ledger) =>
               registerAdapter(ledger, {
                 name,
-                version: options.version,
+                version: options.adapterVersion,
                 kind: options.kind,
                 status: options.status,
                 sourceType: options.sourceType,

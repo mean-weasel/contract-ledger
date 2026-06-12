@@ -1,6 +1,6 @@
 {
   "name": "@mean-weasel/contract-ledger",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "SQLite-backed local CLI contract ledger for agent completion receipts.",
   "type": "module",
   "main": "./dist/index.js",

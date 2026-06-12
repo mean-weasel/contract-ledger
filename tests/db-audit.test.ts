@@ -101,8 +101,11 @@ describe('ledger schema and audit', () => {
               name,
               source_type,
               source_name,
+              source_version,
+              source_url,
               repo_url,
               docs_url,
+              registry_url,
               skill_refs_json
             from verifier_adapters
             order by name
@@ -112,8 +115,11 @@ describe('ledger schema and audit', () => {
           name: string;
           source_type: string;
           source_name: string;
+          source_version: string;
+          source_url: string;
           repo_url: string;
           docs_url: string;
+          registry_url: string;
           skill_refs_json: string;
         }>;
         const profiles = ledger.db
@@ -133,10 +139,13 @@ describe('ledger schema and audit', () => {
           source_name: '@mean-weasel/contract-ledger',
         });
         expect(limner).toMatchObject({
-          source_type: 'manual',
-          source_name: 'limner',
+          source_type: 'npm',
+          source_name: '@neonwatty/limner',
+          source_version: '0.1.0',
+          source_url: 'https://www.npmjs.com/package/@neonwatty/limner',
           repo_url: 'https://github.com/neonwatty/limner',
           docs_url: 'https://github.com/neonwatty/limner#readme',
+          registry_url: 'https://www.npmjs.com/package/@neonwatty/limner',
         });
         expect(JSON.parse(limner?.skill_refs_json ?? '[]')).toEqual([]);
       } finally {
