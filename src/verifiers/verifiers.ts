@@ -13,6 +13,15 @@ export type AdapterRecord = {
   artifactPatterns: unknown;
   receiptMapper: unknown;
   requiresJudgment: boolean;
+  sourceType: string;
+  sourceName: string;
+  sourceVersion: string;
+  sourceUrl: string;
+  repoUrl: string;
+  docsUrl: string;
+  homepageUrl: string;
+  registryUrl: string;
+  skillRefs: unknown;
 };
 
 export type ProfileRecord = {
@@ -52,6 +61,15 @@ export type RegisterAdapterInput = {
   artifactPatterns?: unknown;
   receiptMapper?: unknown;
   requiresJudgment?: boolean;
+  sourceType?: string;
+  sourceName?: string;
+  sourceVersion?: string;
+  sourceUrl?: string;
+  repoUrl?: string;
+  docsUrl?: string;
+  homepageUrl?: string;
+  registryUrl?: string;
+  skillRefs?: unknown;
   actor: string;
   clock?: Clock;
 };
@@ -66,6 +84,15 @@ type AdapterRow = {
   artifact_patterns_json: string;
   receipt_mapper_json: string;
   requires_judgment: number;
+  source_type: string;
+  source_name: string;
+  source_version: string;
+  source_url: string;
+  repo_url: string;
+  docs_url: string;
+  homepage_url: string;
+  registry_url: string;
+  skill_refs_json: string;
 };
 
 type ProfileRow = {
@@ -78,6 +105,64 @@ type ProfileRow = {
   default_required_artifacts_json: string;
   default_failure_modes_json: string;
 };
+
+function isPlainJsonObject(value: object): boolean {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function assertJsonSerializable(value: unknown, fieldName: string, seen = new Set<object>()): void {
+  if (value === null) {
+    return;
+  }
+
+  switch (typeof value) {
+    case 'string':
+    case 'boolean':
+      return;
+    case 'number':
+      if (Number.isFinite(value)) {
+        return;
+      }
+      break;
+    case 'object':
+      if (seen.has(value)) {
+        break;
+      }
+      seen.add(value);
+
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          assertJsonSerializable(item, fieldName, seen);
+        }
+        seen.delete(value);
+        return;
+      }
+
+      if (isPlainJsonObject(value)) {
+        for (const item of Object.values(value)) {
+          assertJsonSerializable(item, fieldName, seen);
+        }
+        seen.delete(value);
+        return;
+      }
+      break;
+  }
+
+  throw new Error(`${fieldName} must be JSON-serializable without lossy values`);
+}
+
+function stringifyJsonField(value: unknown, fieldName: string): string {
+  assertJsonSerializable(value, fieldName);
+  return JSON.stringify(value);
+}
+
+function stringifyJsonArrayField(value: unknown, fieldName: string): string {
+  if (!Array.isArray(value)) {
+    throw new Error(`${fieldName} must be a JSON array`);
+  }
+  return stringifyJsonField(value, fieldName);
+}
 
 export function addVerifier(ledger: Ledger, input: AddVerifierInput): VerifierRecord {
   const id = createId('ver');
@@ -154,6 +239,15 @@ function toAdapterRecord(row: AdapterRow): AdapterRecord {
     artifactPatterns: JSON.parse(row.artifact_patterns_json),
     receiptMapper: JSON.parse(row.receipt_mapper_json),
     requiresJudgment: row.requires_judgment === 1,
+    sourceType: row.source_type,
+    sourceName: row.source_name,
+    sourceVersion: row.source_version,
+    sourceUrl: row.source_url,
+    repoUrl: row.repo_url,
+    docsUrl: row.docs_url,
+    homepageUrl: row.homepage_url,
+    registryUrl: row.registry_url,
+    skillRefs: JSON.parse(row.skill_refs_json),
   };
 }
 
@@ -170,7 +264,16 @@ export function getAdapterByNameOrId(ledger: Ledger, nameOrId: string): AdapterR
         config_schema_json,
         artifact_patterns_json,
         receipt_mapper_json,
-        requires_judgment
+        requires_judgment,
+        source_type,
+        source_name,
+        source_version,
+        source_url,
+        repo_url,
+        docs_url,
+        homepage_url,
+        registry_url,
+        skill_refs_json
       from verifier_adapters
       where id = ?
         or name = ?
@@ -209,6 +312,15 @@ export function registerAdapter(ledger: Ledger, input: RegisterAdapterInput): Ad
           artifact_patterns_json,
           receipt_mapper_json,
           requires_judgment,
+          source_type,
+          source_name,
+          source_version,
+          source_url,
+          repo_url,
+          docs_url,
+          homepage_url,
+          registry_url,
+          skill_refs_json,
           created_at,
           updated_at
         )
@@ -223,6 +335,15 @@ export function registerAdapter(ledger: Ledger, input: RegisterAdapterInput): Ad
           @artifactPatternsJson,
           @receiptMapperJson,
           @requiresJudgment,
+          @sourceType,
+          @sourceName,
+          @sourceVersion,
+          @sourceUrl,
+          @repoUrl,
+          @docsUrl,
+          @homepageUrl,
+          @registryUrl,
+          @skillRefsJson,
           @createdAt,
           @updatedAt
         )
@@ -234,6 +355,15 @@ export function registerAdapter(ledger: Ledger, input: RegisterAdapterInput): Ad
         artifact_patterns_json = excluded.artifact_patterns_json,
         receipt_mapper_json = excluded.receipt_mapper_json,
         requires_judgment = excluded.requires_judgment,
+        source_type = excluded.source_type,
+        source_name = excluded.source_name,
+        source_version = excluded.source_version,
+        source_url = excluded.source_url,
+        repo_url = excluded.repo_url,
+        docs_url = excluded.docs_url,
+        homepage_url = excluded.homepage_url,
+        registry_url = excluded.registry_url,
+        skill_refs_json = excluded.skill_refs_json,
         updated_at = excluded.updated_at
     `,
     )
@@ -243,9 +373,18 @@ export function registerAdapter(ledger: Ledger, input: RegisterAdapterInput): Ad
       version: input.version ?? '1',
       kind: input.kind,
       status: input.status ?? 'active',
-      configSchemaJson: JSON.stringify(input.configSchema ?? {}),
-      artifactPatternsJson: JSON.stringify(input.artifactPatterns ?? []),
-      receiptMapperJson: JSON.stringify(input.receiptMapper ?? {}),
+      sourceType: input.sourceType ?? '',
+      sourceName: input.sourceName ?? '',
+      sourceVersion: input.sourceVersion ?? '',
+      sourceUrl: input.sourceUrl ?? '',
+      repoUrl: input.repoUrl ?? '',
+      docsUrl: input.docsUrl ?? '',
+      homepageUrl: input.homepageUrl ?? '',
+      registryUrl: input.registryUrl ?? '',
+      configSchemaJson: stringifyJsonField(input.configSchema ?? {}, 'configSchema'),
+      artifactPatternsJson: stringifyJsonArrayField(input.artifactPatterns ?? [], 'artifactPatterns'),
+      receiptMapperJson: stringifyJsonField(input.receiptMapper ?? {}, 'receiptMapper'),
+      skillRefsJson: stringifyJsonArrayField(input.skillRefs ?? [], 'skillRefs'),
       requiresJudgment: input.requiresJudgment === true ? 1 : 0,
       createdAt,
       updatedAt: now,
@@ -267,6 +406,15 @@ export function registerAdapter(ledger: Ledger, input: RegisterAdapterInput): Ad
       kind: adapter.kind,
       status: adapter.status,
       requiresJudgment: adapter.requiresJudgment,
+      sourceType: adapter.sourceType,
+      sourceName: adapter.sourceName,
+      sourceVersion: adapter.sourceVersion,
+      sourceUrl: adapter.sourceUrl,
+      repoUrl: adapter.repoUrl,
+      docsUrl: adapter.docsUrl,
+      homepageUrl: adapter.homepageUrl,
+      registryUrl: adapter.registryUrl,
+      skillRefs: adapter.skillRefs,
     },
     clock,
   });
@@ -287,7 +435,16 @@ export function listAdapters(ledger: Ledger): AdapterRecord[] {
         config_schema_json,
         artifact_patterns_json,
         receipt_mapper_json,
-        requires_judgment
+        requires_judgment,
+        source_type,
+        source_name,
+        source_version,
+        source_url,
+        repo_url,
+        docs_url,
+        homepage_url,
+        registry_url,
+        skill_refs_json
       from verifier_adapters
       order by name
     `,

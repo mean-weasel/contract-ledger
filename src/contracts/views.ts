@@ -147,6 +147,9 @@ export function getContractSnapshot(ledger: Ledger, contractId: string): Contrac
           verifiers.criterion_id as criterionId,
           verifiers.adapter_id as adapterId,
           verifier_adapters.name as adapterName,
+          verifier_adapters.source_type as adapterSourceType,
+          verifier_adapters.docs_url as adapterDocsUrl,
+          verifier_adapters.skill_refs_json as adapterSkillRefsJson,
           verifiers.name,
           verifiers.kind,
           verifiers.config_json as configJson,
@@ -158,9 +161,13 @@ export function getContractSnapshot(ledger: Ledger, contractId: string): Contrac
         order by verifiers.created_at, verifiers.rowid
       `,
       )
-      .all(contractId) as Array<Record<string, unknown> & { configJson: string; required: number }>
+      .all(contractId) as Array<
+        Record<string, unknown> & { adapterSkillRefsJson: string | null; configJson: string; required: number }
+      >
   ).map((verifier) => ({
     ...verifier,
+    adapterSkillRefs: parseJson(verifier.adapterSkillRefsJson),
+    adapterSkillRefsJson: undefined,
     config: parseJson(verifier.configJson),
     configJson: undefined,
     required: verifier.required === 1,

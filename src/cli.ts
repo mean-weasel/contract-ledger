@@ -635,6 +635,15 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .requiredOption('--kind <kind>', 'Adapter kind, such as command, visual, browser, or coverage')
     .option('--version <version>', 'Adapter version', '1')
     .option('--status <status>', 'Adapter status', 'active')
+    .option('--source-type <type>', 'Adapter source type, such as builtin, npm, github, local, binary, docker, python, go, mcp, or manual', '')
+    .option('--source-name <name>', 'Adapter source name, package name, binary name, repo name, or plugin name', '')
+    .option('--source-version <version>', 'Adapter source version or version range', '')
+    .option('--source-url <url>', 'Adapter source URL', '')
+    .option('--repo-url <url>', 'Adapter repository URL', '')
+    .option('--docs-url <url>', 'Adapter documentation URL', '')
+    .option('--homepage-url <url>', 'Adapter homepage URL', '')
+    .option('--registry-url <url>', 'Adapter registry or package listing URL', '')
+    .option('--skill-refs-json <json>', 'Optional skill references JSON array', '[]')
     .option('--config-schema-json <json>', 'Adapter config schema JSON', '{}')
     .option('--artifact-patterns-json <json>', 'Adapter artifact patterns JSON array', '[]')
     .option('--receipt-mapper-json <json>', 'Adapter receipt mapper JSON', '{}')
@@ -646,6 +655,15 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           kind: string;
           version: string;
           status: string;
+          sourceType: string;
+          sourceName: string;
+          sourceVersion: string;
+          sourceUrl: string;
+          repoUrl: string;
+          docsUrl: string;
+          homepageUrl: string;
+          registryUrl: string;
+          skillRefsJson: string;
           configSchemaJson: string;
           artifactPatternsJson: string;
           receiptMapperJson: string;
@@ -667,9 +685,18 @@ export function createProgram(deps: ProgramDeps = {}): Command {
                 version: options.version,
                 kind: options.kind,
                 status: options.status,
+                sourceType: options.sourceType,
+                sourceName: options.sourceName,
+                sourceVersion: options.sourceVersion,
+                sourceUrl: options.sourceUrl,
+                repoUrl: options.repoUrl,
+                docsUrl: options.docsUrl,
+                homepageUrl: options.homepageUrl,
+                registryUrl: options.registryUrl,
                 configSchema: parseJsonOption(options.configSchemaJson, '--config-schema-json'),
                 artifactPatterns: parseJsonOption(options.artifactPatternsJson, '--artifact-patterns-json'),
                 receiptMapper: parseJsonOption(options.receiptMapperJson, '--receipt-mapper-json'),
+                skillRefs: parseJsonOption(options.skillRefsJson, '--skill-refs-json'),
                 requiresJudgment: options.requiresJudgment === true,
                 actor,
               }),

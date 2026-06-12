@@ -232,8 +232,21 @@ Adapter fields:
 - `artifact_patterns_json`
 - `receipt_mapper_json`
 - `requires_judgment`
+- `source_type`
+- `source_name`
+- `source_version`
+- `source_url`
+- `repo_url`
+- `docs_url`
+- `homepage_url`
+- `registry_url`
+- `skill_refs_json`
 - `created_at`
 - `updated_at`
+
+Skill references are optional pointers for agent-facing usage guidance. They do
+not prove a skill was installed or used. Receipts and audit events should record
+actual skill usage when it matters.
 
 Acceptance profile fields:
 

@@ -60,14 +60,62 @@ describe('ledger schema and audit', () => {
     });
   });
 
+  it('verifier_adapters include registry-agnostic source and reference columns', async () => {
+    await withTempWorkspace((root) => {
+      const ledger = openLedger({ cwd: root });
+
+      try {
+        const columns = ledger.db
+          .prepare('pragma table_info(verifier_adapters)')
+          .all() as Array<{ name: string; notnull: number }>;
+        const byName = new Map(columns.map((column) => [column.name, column]));
+
+        for (const name of [
+          'source_type',
+          'source_name',
+          'source_version',
+          'source_url',
+          'repo_url',
+          'docs_url',
+          'homepage_url',
+          'registry_url',
+          'skill_refs_json',
+        ]) {
+          expect(byName.get(name)?.notnull).toBe(1);
+        }
+      } finally {
+        ledger.close();
+      }
+    });
+  });
+
   it('seed data includes built-in adapters and acceptance profiles', async () => {
     await withTempWorkspace((root) => {
       const ledger = openLedger({ cwd: root });
 
       try {
         const adapters = ledger.db
-          .prepare('select name from verifier_adapters order by name')
-          .all() as Array<{ name: string }>;
+          .prepare(
+            `
+            select
+              name,
+              source_type,
+              source_name,
+              repo_url,
+              docs_url,
+              skill_refs_json
+            from verifier_adapters
+            order by name
+          `,
+          )
+          .all() as Array<{
+          name: string;
+          source_type: string;
+          source_name: string;
+          repo_url: string;
+          docs_url: string;
+          skill_refs_json: string;
+        }>;
         const profiles = ledger.db
           .prepare('select name from acceptance_profiles order by name')
           .all() as Array<{ name: string }>;
@@ -76,6 +124,21 @@ describe('ledger schema and audit', () => {
           expect.arrayContaining(['command', 'limner']),
         );
         expect(profiles.map((profile) => profile.name)).toContain('limner-visual-fidelity');
+
+        const command = adapters.find((adapter) => adapter.name === 'command');
+        const limner = adapters.find((adapter) => adapter.name === 'limner');
+
+        expect(command).toMatchObject({
+          source_type: 'builtin',
+          source_name: '@mean-weasel/contract-ledger',
+        });
+        expect(limner).toMatchObject({
+          source_type: 'manual',
+          source_name: 'limner',
+          repo_url: 'https://github.com/neonwatty/limner',
+          docs_url: 'https://github.com/neonwatty/limner#readme',
+        });
+        expect(JSON.parse(limner?.skill_refs_json ?? '[]')).toEqual([]);
       } finally {
         ledger.close();
       }

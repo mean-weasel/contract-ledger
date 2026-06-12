@@ -69,6 +69,15 @@ create table if not exists verifier_adapters (
   artifact_patterns_json text not null,
   receipt_mapper_json text not null,
   requires_judgment integer not null,
+  source_type text not null default '',
+  source_name text not null default '',
+  source_version text not null default '',
+  source_url text not null default '',
+  repo_url text not null default '',
+  docs_url text not null default '',
+  homepage_url text not null default '',
+  registry_url text not null default '',
+  skill_refs_json text not null default '[]',
   created_at text not null,
   updated_at text not null
 );
@@ -619,6 +628,25 @@ export function migrateContractScopedSchema(db: Database.Database): void {
   }
 }
 
+function addColumnIfMissing(db: Database.Database, tableName: string, columnSql: string): void {
+  const columnName = columnSql.trim().split(/\s+/)[0];
+  if (!tableHasColumn(db, tableName, columnName)) {
+    db.prepare(`alter table ${tableName} add column ${columnSql}`).run();
+  }
+}
+
+export function migrateAdapterManifestReferences(db: Database.Database): void {
+  addColumnIfMissing(db, 'verifier_adapters', "source_type text not null default ''");
+  addColumnIfMissing(db, 'verifier_adapters', "source_name text not null default ''");
+  addColumnIfMissing(db, 'verifier_adapters', "source_version text not null default ''");
+  addColumnIfMissing(db, 'verifier_adapters', "source_url text not null default ''");
+  addColumnIfMissing(db, 'verifier_adapters', "repo_url text not null default ''");
+  addColumnIfMissing(db, 'verifier_adapters', "docs_url text not null default ''");
+  addColumnIfMissing(db, 'verifier_adapters', "homepage_url text not null default ''");
+  addColumnIfMissing(db, 'verifier_adapters', "registry_url text not null default ''");
+  addColumnIfMissing(db, 'verifier_adapters', "skill_refs_json text not null default '[]'");
+}
+
 function assertIsoTimestamp(value: string): void {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
     throw new Error(`seedSql requires an ISO timestamp, received: ${value}`);
@@ -640,6 +668,15 @@ insert or ignore into verifier_adapters
     artifact_patterns_json,
     receipt_mapper_json,
     requires_judgment,
+    source_type,
+    source_name,
+    source_version,
+    source_url,
+    repo_url,
+    docs_url,
+    homepage_url,
+    registry_url,
+    skill_refs_json,
     created_at,
     updated_at
   )
@@ -654,6 +691,15 @@ values
     '[]',
     '{}',
     0,
+    'builtin',
+    '@mean-weasel/contract-ledger',
+    '1',
+    '',
+    'https://github.com/mean-weasel/contract-ledger',
+    'https://github.com/mean-weasel/contract-ledger#readme',
+    '',
+    'https://www.npmjs.com/package/@mean-weasel/contract-ledger',
+    '[]',
     '${now}',
     '${now}'
   ),
@@ -667,6 +713,15 @@ values
     '["**/side-by-side.png","**/dom-metrics.json","**/reports/*.md",".limner/runs/*/manifest.json",".limner/runs/*/events.jsonl"]',
     '{"requiresJudgment":true}',
     1,
+    'manual',
+    'limner',
+    '1',
+    '',
+    'https://github.com/neonwatty/limner',
+    'https://github.com/neonwatty/limner#readme',
+    '',
+    '',
+    '[]',
     '${now}',
     '${now}'
   );

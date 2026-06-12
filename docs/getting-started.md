@@ -146,9 +146,24 @@ Register custom verifier adapters when tools like Limner need structured
 acceptance metadata without being hard-coded into the core CLI:
 
 ```bash
-contract adapter-add custom-limner --kind visual_fidelity --artifact-patterns-json '[".limner/runs/*/manifest.json"]' --requires-judgment
+contract adapter-add custom-limner \
+  --kind visual_fidelity \
+  --source-type github \
+  --source-name neonwatty/limner \
+  --source-url https://github.com/neonwatty/limner \
+  --repo-url https://github.com/neonwatty/limner \
+  --docs-url https://github.com/neonwatty/limner#readme \
+  --artifact-patterns-json '[".limner/runs/*/manifest.json"]' \
+  --skill-refs-json '[{"kind":"codex-skill","name":"limner-contract-verifier","recommended":true,"url":"https://github.com/neonwatty/limner/tree/main/skills/limner-contract-verifier"}]' \
+  --requires-judgment
 contract verifier-add-adapter ctr_xxx custom-limner "Visual compare" --config-json '{"target":"checkout-mobile"}'
 ```
+
+Adapter references are intentionally lightweight. Store source and documentation
+links in the ledger so agents can discover where the tool lives, but keep full
+usage instructions in the linked docs, repository, package, plugin, or skill.
+Sub-agent routing is not adapter metadata; record those decisions in contracts,
+verifiers, and receipts.
 
 Adapter registration, adapter listing, and adapter-backed verifier creation are
 audited in `.contracts/ledger.sqlite`.

@@ -1096,10 +1096,28 @@ describe('CLI commands', () => {
           'custom-limner',
           '--kind',
           'visual_fidelity',
+          '--source-type',
+          'github',
+          '--source-name',
+          'neonwatty/limner',
+          '--source-version',
+          'main',
+          '--source-url',
+          'https://github.com/neonwatty/limner',
+          '--repo-url',
+          'https://github.com/neonwatty/limner',
+          '--docs-url',
+          'https://github.com/neonwatty/limner#readme',
+          '--homepage-url',
+          'https://example.com/limner',
+          '--registry-url',
+          'https://github.com/neonwatty/limner/releases',
           '--artifact-patterns-json',
           '[".limner/runs/*/manifest.json"]',
           '--receipt-mapper-json',
           '{"summary":"limner visual receipt"}',
+          '--skill-refs-json',
+          '[{"kind":"codex-skill","name":"limner-contract-verifier","recommended":true,"url":"https://github.com/neonwatty/limner/tree/main/skills/limner-contract-verifier"}]',
           '--requires-judgment',
         ],
         stdout,
@@ -1122,10 +1140,55 @@ describe('CLI commands', () => {
       const verifierId = stdout.at(-1)?.trim();
       expect(verifierId).toMatch(/^ver_/);
 
+      await runCli({
+        cwd: root,
+        argv: ['show', contractId ?? 'missing'],
+        stdout,
+      });
+      const shown = JSON.parse(stdout.at(-1) ?? '{}') as {
+        verifiers: Array<{
+          adapterName?: string;
+          adapterSourceType?: string;
+          adapterDocsUrl?: string;
+          adapterSkillRefs?: unknown;
+        }>;
+      };
+
       withLedger(root, (ledger) => {
         const adapter = ledger.db
-          .prepare('select name, kind, requires_judgment from verifier_adapters where id = ?')
-          .get(adapterId) as { name: string; kind: string; requires_judgment: number };
+          .prepare(
+            `
+            select
+              name,
+              kind,
+              requires_judgment,
+              source_type,
+              source_name,
+              source_version,
+              source_url,
+              repo_url,
+              docs_url,
+              homepage_url,
+              registry_url,
+              skill_refs_json
+            from verifier_adapters
+            where id = ?
+          `,
+          )
+          .get(adapterId) as {
+          name: string;
+          kind: string;
+          requires_judgment: number;
+          source_type: string;
+          source_name: string;
+          source_version: string;
+          source_url: string;
+          repo_url: string;
+          docs_url: string;
+          homepage_url: string;
+          registry_url: string;
+          skill_refs_json: string;
+        };
         const verifier = ledger.db
           .prepare('select adapter_id, kind, config_json from verifiers where id = ?')
           .get(verifierId) as { adapter_id: string; kind: string; config_json: string };
@@ -1140,16 +1203,81 @@ describe('CLI commands', () => {
           )
           .all() as Array<{ event_type: string }>;
 
-        expect(adapter).toEqual({
+        expect(adapter).toMatchObject({
           name: 'custom-limner',
           kind: 'visual_fidelity',
           requires_judgment: 1,
+          source_type: 'github',
+          source_name: 'neonwatty/limner',
+          source_version: 'main',
+          source_url: 'https://github.com/neonwatty/limner',
+          repo_url: 'https://github.com/neonwatty/limner',
+          docs_url: 'https://github.com/neonwatty/limner#readme',
+          homepage_url: 'https://example.com/limner',
+          registry_url: 'https://github.com/neonwatty/limner/releases',
         });
+        expect(JSON.parse(adapter.skill_refs_json)).toEqual([
+          {
+            kind: 'codex-skill',
+            name: 'limner-contract-verifier',
+            recommended: true,
+            url: 'https://github.com/neonwatty/limner/tree/main/skills/limner-contract-verifier',
+          },
+        ]);
         expect(verifier.adapter_id).toBe(adapterId);
         expect(verifier.kind).toBe('visual_fidelity');
         expect(JSON.parse(verifier.config_json)).toEqual({ target: 'checkout-mobile' });
+        expect(shown.verifiers[0]).toMatchObject({
+          adapterName: 'custom-limner',
+          adapterSourceType: 'github',
+          adapterDocsUrl: 'https://github.com/neonwatty/limner#readme',
+        });
+        expect(shown.verifiers[0]?.adapterSkillRefs).toEqual([
+          {
+            kind: 'codex-skill',
+            name: 'limner-contract-verifier',
+            recommended: true,
+            url: 'https://github.com/neonwatty/limner/tree/main/skills/limner-contract-verifier',
+          },
+        ]);
         expect(events.map((event) => event.event_type)).toEqual(['adapter_added', 'verifier_added']);
       });
+    });
+  });
+
+  it('rejects invalid adapter skill refs JSON', async () => {
+    await withTempWorkspace(async (root) => {
+      await expect(
+        runCli({
+          cwd: root,
+          argv: [
+            'adapter-add',
+            'bad-skill-refs',
+            '--kind',
+            'manual',
+            '--skill-refs-json',
+            '{not-json',
+          ],
+        }),
+      ).rejects.toThrow(/--skill-refs-json/);
+    });
+  });
+
+  it('rejects non-array adapter skill refs JSON', async () => {
+    await withTempWorkspace(async (root) => {
+      await expect(
+        runCli({
+          cwd: root,
+          argv: [
+            'adapter-add',
+            'object-skill-refs',
+            '--kind',
+            'manual',
+            '--skill-refs-json',
+            '{"name":"limner-contract-verifier"}',
+          ],
+        }),
+      ).rejects.toThrow(/skillRefs must be a JSON array/);
     });
   });
 });
