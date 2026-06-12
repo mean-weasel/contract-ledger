@@ -715,7 +715,7 @@ values
     1,
     'npm',
     '@neonwatty/limner',
-    '0.1.0',
+    '0.1.1',
     'https://www.npmjs.com/package/@neonwatty/limner',
     'https://github.com/neonwatty/limner',
     'https://github.com/neonwatty/limner#readme',

@@ -141,7 +141,7 @@ describe('ledger schema and audit', () => {
         expect(limner).toMatchObject({
           source_type: 'npm',
           source_name: '@neonwatty/limner',
-          source_version: '0.1.0',
+          source_version: '0.1.1',
           source_url: 'https://www.npmjs.com/package/@neonwatty/limner',
           repo_url: 'https://github.com/neonwatty/limner',
           docs_url: 'https://github.com/neonwatty/limner#readme',
