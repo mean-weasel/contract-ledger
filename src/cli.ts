@@ -41,7 +41,7 @@ import {
   registerAdapter,
 } from './verifiers/verifiers.js';
 
-const cliVersion = '0.1.3';
+const cliVersion = '0.1.4';
 
 export type ProgramDeps = {
   cwd?: string;
