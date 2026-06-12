@@ -47,7 +47,7 @@ import {
   registerAdapter,
 } from './verifiers/verifiers.js';
 
-const cliVersion = '0.1.7';
+const cliVersion = '0.1.8';
 
 export type ProgramDeps = {
   cwd?: string;
@@ -182,6 +182,18 @@ function parseJsonOption(value: string, label: string): unknown {
   } catch (error) {
     throw new Error(`${label} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function parseBooleanOption(value: string, label: string): boolean {
+  if (value === 'true') {
+    return true;
+  }
+
+  if (value === 'false') {
+    return false;
+  }
+
+  throw new Error(`${label} must be true or false`);
 }
 
 function resolveLedgerTarget(input: {
@@ -807,6 +819,106 @@ export function createProgram(deps: ProgramDeps = {}): Command {
                 actor,
               }),
             );
+            emit(adapter.id);
+          },
+        );
+      },
+    );
+
+  program
+    .command('adapter-update')
+    .description('Patch an existing verifier adapter without restating its full manifest')
+    .argument('<adapter>')
+    .option('--kind <kind>', 'Adapter kind, such as command, visual, browser, or coverage')
+    .option('--adapter-version <version>', 'Adapter definition version')
+    .option('--status <status>', 'Adapter status')
+    .option('--source-type <type>', 'Adapter source type, such as builtin, npm, github, local, binary, docker, python, go, mcp, or manual')
+    .option('--source-name <name>', 'Adapter source name, package name, binary name, repo name, or plugin name')
+    .option('--source-version <version>', 'Adapter source version or version range')
+    .option('--source-url <url>', 'Adapter source URL')
+    .option('--repo-url <url>', 'Adapter repository URL')
+    .option('--docs-url <url>', 'Adapter documentation URL')
+    .option('--homepage-url <url>', 'Adapter homepage URL')
+    .option('--registry-url <url>', 'Adapter registry or package listing URL')
+    .option('--skill-refs-json <json>', 'Optional skill references JSON array')
+    .option('--config-schema-json <json>', 'Adapter config schema JSON')
+    .option('--artifact-patterns-json <json>', 'Adapter artifact patterns JSON array')
+    .option('--receipt-mapper-json <json>', 'Adapter receipt mapper JSON')
+    .option('--requires-judgment <true|false>', 'Whether receipts from this adapter require judgment')
+    .action(
+      async (
+        adapterNameOrId: string,
+        options: {
+          kind?: string;
+          adapterVersion?: string;
+          status?: string;
+          sourceType?: string;
+          sourceName?: string;
+          sourceVersion?: string;
+          sourceUrl?: string;
+          repoUrl?: string;
+          docsUrl?: string;
+          homepageUrl?: string;
+          registryUrl?: string;
+          skillRefsJson?: string;
+          configSchemaJson?: string;
+          artifactPatternsJson?: string;
+          receiptMapperJson?: string;
+          requiresJudgment?: string;
+        },
+      ) => {
+        await auditedInLedger(
+          {
+            cwd,
+            actor,
+            argv: getInvocationArgv(deps, program),
+            subcommand: 'adapter-update',
+            scopeType: 'adapter',
+            scopeId: adapterNameOrId,
+          },
+          () => {
+            const adapter = usingLedger(ledgerTarget(), (ledger) => {
+              const existing = getAdapterByNameOrId(ledger, adapterNameOrId);
+              if (existing === undefined) {
+                throw new Error(`Adapter not found: ${adapterNameOrId}`);
+              }
+
+              return registerAdapter(ledger, {
+                name: existing.name,
+                version: options.adapterVersion ?? existing.version,
+                kind: options.kind ?? existing.kind,
+                status: options.status ?? existing.status,
+                sourceType: options.sourceType ?? existing.sourceType,
+                sourceName: options.sourceName ?? existing.sourceName,
+                sourceVersion: options.sourceVersion ?? existing.sourceVersion,
+                sourceUrl: options.sourceUrl ?? existing.sourceUrl,
+                repoUrl: options.repoUrl ?? existing.repoUrl,
+                docsUrl: options.docsUrl ?? existing.docsUrl,
+                homepageUrl: options.homepageUrl ?? existing.homepageUrl,
+                registryUrl: options.registryUrl ?? existing.registryUrl,
+                configSchema:
+                  options.configSchemaJson === undefined
+                    ? existing.configSchema
+                    : parseJsonOption(options.configSchemaJson, '--config-schema-json'),
+                artifactPatterns:
+                  options.artifactPatternsJson === undefined
+                    ? existing.artifactPatterns
+                    : parseJsonOption(options.artifactPatternsJson, '--artifact-patterns-json'),
+                receiptMapper:
+                  options.receiptMapperJson === undefined
+                    ? existing.receiptMapper
+                    : parseJsonOption(options.receiptMapperJson, '--receipt-mapper-json'),
+                skillRefs:
+                  options.skillRefsJson === undefined
+                    ? existing.skillRefs
+                    : parseJsonOption(options.skillRefsJson, '--skill-refs-json'),
+                requiresJudgment:
+                  options.requiresJudgment === undefined
+                    ? existing.requiresJudgment
+                    : parseBooleanOption(options.requiresJudgment, '--requires-judgment'),
+                actor,
+              });
+            });
             emit(adapter.id);
           },
         );

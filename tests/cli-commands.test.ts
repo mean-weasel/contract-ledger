@@ -1381,6 +1381,140 @@ describe('CLI commands', () => {
     });
   });
 
+  it('updates adapter fields without restating the full manifest', async () => {
+    await withTempWorkspace(async (root) => {
+      const stdout: string[] = [];
+
+      await runCli({
+        cwd: root,
+        argv: [
+          'adapter-add',
+          'patchable-limner',
+          '--kind',
+          'visual_fidelity',
+          '--adapter-version',
+          '2',
+          '--source-type',
+          'npm',
+          '--source-name',
+          '@neonwatty/limner',
+          '--source-version',
+          '0.1.0',
+          '--source-url',
+          'https://www.npmjs.com/package/@neonwatty/limner',
+          '--repo-url',
+          'https://github.com/neonwatty/limner',
+          '--docs-url',
+          'https://github.com/neonwatty/limner#readme',
+          '--artifact-patterns-json',
+          '[".limner/runs/*/manifest.json"]',
+          '--receipt-mapper-json',
+          '{"summary":"limner visual receipt"}',
+          '--requires-judgment',
+        ],
+        stdout,
+      });
+      const adapterId = stdout.at(-1)?.trim();
+
+      await runCli({
+        cwd: root,
+        argv: ['adapter-update', 'patchable-limner', '--source-version', '0.1.1'],
+        stdout,
+      });
+
+      expect(stdout.at(-1)?.trim()).toBe(adapterId);
+
+      withLedger(root, (ledger) => {
+        const adapter = ledger.db
+          .prepare(
+            `
+            select
+              version,
+              kind,
+              source_type,
+              source_name,
+              source_version,
+              source_url,
+              repo_url,
+              docs_url,
+              artifact_patterns_json,
+              receipt_mapper_json,
+              requires_judgment
+            from verifier_adapters
+            where name = 'patchable-limner'
+          `,
+          )
+          .get() as {
+          version: string;
+          kind: string;
+          source_type: string;
+          source_name: string;
+          source_version: string;
+          source_url: string;
+          repo_url: string;
+          docs_url: string;
+          artifact_patterns_json: string;
+          receipt_mapper_json: string;
+          requires_judgment: number;
+        };
+        const events = ledger.db
+          .prepare(
+            `
+            select event_type, payload_json
+            from events
+            where event_type in ('adapter_added', 'adapter_updated')
+            order by created_at, rowid
+          `,
+          )
+          .all() as Array<{ event_type: string; payload_json: string }>;
+
+        expect(adapter).toMatchObject({
+          version: '2',
+          kind: 'visual_fidelity',
+          source_type: 'npm',
+          source_name: '@neonwatty/limner',
+          source_version: '0.1.1',
+          source_url: 'https://www.npmjs.com/package/@neonwatty/limner',
+          repo_url: 'https://github.com/neonwatty/limner',
+          docs_url: 'https://github.com/neonwatty/limner#readme',
+          requires_judgment: 1,
+        });
+        expect(JSON.parse(adapter.artifact_patterns_json)).toEqual([
+          '.limner/runs/*/manifest.json',
+        ]);
+        expect(JSON.parse(adapter.receipt_mapper_json)).toEqual({
+          summary: 'limner visual receipt',
+        });
+        expect(events.map((event) => event.event_type)).toEqual([
+          'adapter_added',
+          'adapter_updated',
+        ]);
+        expect(JSON.parse(events[1]?.payload_json ?? '{}')).toMatchObject({
+          name: 'patchable-limner',
+          sourceVersion: '0.1.1',
+        });
+      });
+    });
+  });
+
+  it('rejects adapter-update for missing adapters and invalid boolean patches', async () => {
+    await withTempWorkspace(async (root) => {
+      await expect(
+        runCli({
+          cwd: root,
+          argv: ['adapter-update', 'missing-adapter', '--source-version', '1.2.3'],
+        }),
+      ).rejects.toThrow('Adapter not found: missing-adapter');
+
+      await expect(
+        runCli({
+          cwd: root,
+          argv: ['adapter-update', 'limner', '--requires-judgment', 'maybe'],
+        }),
+      ).rejects.toThrow('--requires-judgment must be true or false');
+    });
+  });
+
   it('rejects invalid adapter skill refs JSON', async () => {
     await withTempWorkspace(async (root) => {
       await expect(

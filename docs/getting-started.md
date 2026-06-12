@@ -190,6 +190,13 @@ contract adapter-add custom-limner \
 contract verifier-add-adapter ctr_xxx custom-limner "Visual compare" --config-json '{"target":"checkout-mobile"}'
 ```
 
+Patch an existing adapter when only its source metadata changes:
+
+```bash
+contract adapter-update limner --source-version 0.1.1
+contract adapter-update custom-limner --docs-url https://github.com/neonwatty/limner#readme
+```
+
 Adapter references are intentionally lightweight. Store source and documentation
 links in the ledger so agents can discover where the tool lives, but keep full
 usage instructions in the linked docs, repository, package, plugin, or skill.

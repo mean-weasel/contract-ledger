@@ -117,6 +117,7 @@ Use adapters when a verifier comes from a tool with structured artifacts, such a
 
 ```bash
 contract adapter-add custom-limner --kind visual_fidelity --artifact-patterns-json '[".limner/runs/*/manifest.json"]' --requires-judgment
+contract adapter-update limner --source-version 0.1.1
 contract verifier-add-adapter ctr_xxx custom-limner "Visual compare" --config-json '{"target":"checkout-mobile"}'
 ```
 
