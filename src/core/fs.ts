@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, stat } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 export type WorkspacePaths = {
@@ -25,6 +26,31 @@ export function getWorkspacePaths(cwd: string): WorkspacePaths {
     ledgerPath: path.join(contractsDir, 'ledger.sqlite'),
     artifactsDir: path.join(contractsDir, 'artifacts'),
     exportsDir: path.join(contractsDir, 'exports'),
+  };
+}
+
+export function getGlobalLedgerPaths(homeDir = os.homedir()): WorkspacePaths {
+  const root = path.resolve(homeDir, '.contract-ledger');
+
+  return {
+    root,
+    contractsDir: root,
+    ledgerPath: path.join(root, 'ledger.sqlite'),
+    artifactsDir: path.join(root, 'artifacts'),
+    exportsDir: path.join(root, 'exports'),
+  };
+}
+
+export function getExplicitLedgerPaths(ledgerPath: string): WorkspacePaths {
+  const resolvedLedgerPath = path.resolve(ledgerPath);
+  const root = path.dirname(resolvedLedgerPath);
+
+  return {
+    root,
+    contractsDir: root,
+    ledgerPath: resolvedLedgerPath,
+    artifactsDir: path.join(root, 'artifacts'),
+    exportsDir: path.join(root, 'exports'),
   };
 }
 

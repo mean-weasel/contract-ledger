@@ -18,6 +18,12 @@ import {
   listContractStatuses,
 } from './contracts/views.js';
 import {
+  getExplicitLedgerPaths,
+  getGlobalLedgerPaths,
+  getWorkspacePaths,
+  type WorkspacePaths,
+} from './core/fs.js';
+import {
   addCriterion,
   updateCriterionStatus,
   type CriterionStatus,
@@ -41,18 +47,29 @@ import {
   registerAdapter,
 } from './verifiers/verifiers.js';
 
-const cliVersion = '0.1.5';
+const cliVersion = '0.1.6';
 
 export type ProgramDeps = {
   cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  homeDir?: string;
   actor?: string;
   stdout?: (line: string) => void;
   stderr?: (line: string) => void;
   argv?: string[];
 };
 
+type LedgerMode = 'workspace' | 'global' | 'explicit';
+
+type LedgerTarget = {
+  cwd: string;
+  mode: LedgerMode;
+  paths: WorkspacePaths;
+};
+
 type AuditedInput = {
   cwd: string;
+  ledgerTarget: LedgerTarget;
   actor: string;
   argv: string[];
   subcommand: string;
@@ -167,8 +184,42 @@ function parseJsonOption(value: string, label: string): unknown {
   }
 }
 
-function usingLedger<T>(cwd: string, fn: (ledger: Ledger) => T): T {
-  const ledger = openLedger({ cwd });
+function resolveLedgerTarget(input: {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  homeDir?: string;
+  options: {
+    globalLedger?: boolean;
+    ledgerPath?: string;
+  };
+}): LedgerTarget {
+  const explicitLedgerPath = input.options.ledgerPath ?? input.env.CONTRACT_LEDGER_PATH;
+
+  if (explicitLedgerPath !== undefined && explicitLedgerPath.length > 0) {
+    return {
+      cwd: input.cwd,
+      mode: 'explicit',
+      paths: getExplicitLedgerPaths(explicitLedgerPath),
+    };
+  }
+
+  if (input.options.globalLedger === true || input.env.CONTRACT_LEDGER_SCOPE === 'global') {
+    return {
+      cwd: input.cwd,
+      mode: 'global',
+      paths: getGlobalLedgerPaths(input.homeDir),
+    };
+  }
+
+  return {
+    cwd: input.cwd,
+    mode: 'workspace',
+    paths: getWorkspacePaths(input.cwd),
+  };
+}
+
+function usingLedger<T>(target: LedgerTarget, fn: (ledger: Ledger) => T): T {
+  const ledger = openLedger({ cwd: target.cwd, paths: target.paths });
 
   try {
     return fn(ledger);
@@ -177,8 +228,8 @@ function usingLedger<T>(cwd: string, fn: (ledger: Ledger) => T): T {
   }
 }
 
-async function usingLedgerAsync<T>(cwd: string, fn: (ledger: Ledger) => Promise<T>): Promise<T> {
-  const ledger = openLedger({ cwd });
+async function usingLedgerAsync<T>(target: LedgerTarget, fn: (ledger: Ledger) => Promise<T>): Promise<T> {
+  const ledger = openLedger({ cwd: target.cwd, paths: target.paths });
 
   try {
     return await fn(ledger);
@@ -191,7 +242,7 @@ async function audited<T>(input: AuditedInput, fn: () => T | Promise<T>): Promis
   const contractId = input.contractId ?? (input.scopeType === 'contract' ? input.scopeId : undefined);
   let invocationId = '';
 
-  usingLedger(input.cwd, (ledger) => {
+  usingLedger(input.ledgerTarget, (ledger) => {
     const invocation = createCommandInvocation(ledger, {
       actor: input.actor,
       contractId,
@@ -212,6 +263,8 @@ async function audited<T>(input: AuditedInput, fn: () => T | Promise<T>): Promis
       eventType: 'cli_invoked',
       payload: {
         subcommand: input.subcommand,
+        ledgerMode: input.ledgerTarget.mode,
+        ledgerPath: input.ledgerTarget.paths.ledgerPath,
       },
     });
   });
@@ -219,7 +272,7 @@ async function audited<T>(input: AuditedInput, fn: () => T | Promise<T>): Promis
   try {
     const result = await withAuditContext(invocationId, fn);
 
-    usingLedger(input.cwd, (ledger) => {
+    usingLedger(input.ledgerTarget, (ledger) => {
       completeCommandInvocation(ledger, invocationId, { exitCode: 0, status: 'ok' });
       recordEvent(ledger, {
         commandInvocationId: invocationId,
@@ -238,7 +291,7 @@ async function audited<T>(input: AuditedInput, fn: () => T | Promise<T>): Promis
 
     return result;
   } catch (error) {
-    usingLedger(input.cwd, (ledger) => {
+    usingLedger(input.ledgerTarget, (ledger) => {
       completeCommandInvocation(ledger, invocationId, { exitCode: 1, status: 'failed' });
       recordEvent(ledger, {
         commandInvocationId: invocationId,
@@ -262,6 +315,7 @@ async function audited<T>(input: AuditedInput, fn: () => T | Promise<T>): Promis
 
 export function createProgram(deps: ProgramDeps = {}): Command {
   const cwd = deps.cwd ?? process.cwd();
+  const env = deps.env ?? process.env;
   const actor = deps.actor ?? defaultActor();
   const stdout = deps.stdout ?? writeDefaultOut;
   const stderr = deps.stderr ?? writeDefaultErr;
@@ -276,11 +330,31 @@ export function createProgram(deps: ProgramDeps = {}): Command {
 
     writeOut(`${line}\n`);
   };
+  const ledgerTarget = () =>
+    resolveLedgerTarget({
+      cwd,
+      env,
+      homeDir: deps.homeDir,
+      options: program.opts() as { globalLedger?: boolean; ledgerPath?: string },
+    });
+  const auditedInLedger = <T>(
+    input: Omit<AuditedInput, 'ledgerTarget'>,
+    fn: () => T | Promise<T>,
+  ): Promise<T> =>
+    audited(
+      {
+        ...input,
+        ledgerTarget: ledgerTarget(),
+      },
+      fn,
+    );
 
   program
     .name('contract')
     .description('SQLite-backed local contract ledger')
-    .version(cliVersion);
+    .version(cliVersion)
+    .option('--global-ledger', 'Use the global ledger at ~/.contract-ledger/ledger.sqlite')
+    .option('--ledger-path <path>', 'Use an explicit SQLite ledger file path');
 
   program.configureOutput({
     writeOut: (value) => stdout(value.endsWith('\n') ? value.slice(0, -1) : value),
@@ -295,6 +369,38 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     });
 
   program
+    .command('ledger-info')
+    .description('Show which ledger this invocation will use')
+    .action(async () => {
+      await auditedInLedger(
+        {
+          cwd,
+          actor,
+          argv: getInvocationArgv(deps, program),
+          subcommand: 'ledger-info',
+          scopeType: 'workspace',
+        },
+        () => {
+          const target = ledgerTarget();
+          emit(
+            JSON.stringify(
+              {
+                mode: target.mode,
+                cwd: target.cwd,
+                ledgerPath: target.paths.ledgerPath,
+                contractsDir: target.paths.contractsDir,
+                artifactsDir: target.paths.artifactsDir,
+                exportsDir: target.paths.exportsDir,
+              },
+              null,
+              2,
+            ),
+          );
+        },
+      );
+    });
+
+  program
     .command('skill-install')
     .description('Install the bundled Contract Ledger Codex skill')
     .option('--target-dir <path>', 'Directory that should contain the installed SKILL.md')
@@ -304,7 +410,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
         targetDir?: string;
         overwrite?: boolean;
       }) => {
-        await audited(
+        await auditedInLedger(
           {
             cwd,
             actor,
@@ -318,7 +424,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
               overwrite: options.overwrite === true,
             });
 
-            usingLedger(cwd, (ledger) => {
+            usingLedger(ledgerTarget(), (ledger) => {
               recordEvent(ledger, {
                 scopeType: 'skill',
                 scopeId: 'contract-ledger',
@@ -353,7 +459,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
         },
         command: Command,
       ) => {
-        await audited(
+        await auditedInLedger(
           {
             cwd,
             actor,
@@ -362,7 +468,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
             scopeType: 'contract',
           },
           () => {
-            const contract = usingLedger(cwd, (ledger) =>
+            const contract = usingLedger(ledgerTarget(), (ledger) =>
               createContract(ledger, {
                 title,
                 intent: options.intent,
@@ -381,7 +487,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .description('Accept a draft contract')
     .argument('<contractId>')
     .action(async (contractId: string, _options: unknown, command: Command) => {
-      await audited(
+      await auditedInLedger(
         {
           cwd,
           actor,
@@ -391,7 +497,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           scopeId: contractId,
         },
         () => {
-          const contract = usingLedger(cwd, (ledger) => acceptContract(ledger, { contractId, actor }));
+          const contract = usingLedger(ledgerTarget(), (ledger) => acceptContract(ledger, { contractId, actor }));
           emit(`${contract.id} ${contract.status}`);
         },
       );
@@ -402,7 +508,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .description('Show a contract with criteria, todos, verifiers, failure modes, receipts, and closeout problems')
     .argument('<contractId>')
     .action(async (contractId: string) => {
-      await audited(
+      await auditedInLedger(
         {
           cwd,
           actor,
@@ -412,7 +518,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           scopeId: contractId,
         },
         () => {
-          emit(JSON.stringify(usingLedger(cwd, (ledger) => getContractSnapshot(ledger, contractId)), null, 2));
+          emit(JSON.stringify(usingLedger(ledgerTarget(), (ledger) => getContractSnapshot(ledger, contractId)), null, 2));
         },
       );
     });
@@ -422,7 +528,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .description('Show contract status summaries')
     .argument('[contractId]')
     .action(async (contractId: string | undefined) => {
-      await audited(
+      await auditedInLedger(
         {
           cwd,
           actor,
@@ -432,7 +538,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           scopeId: contractId,
         },
         () => {
-          emit(JSON.stringify(usingLedger(cwd, (ledger) => listContractStatuses(ledger, contractId)), null, 2));
+          emit(JSON.stringify(usingLedger(ledgerTarget(), (ledger) => listContractStatuses(ledger, contractId)), null, 2));
         },
       );
     });
@@ -442,7 +548,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .description('Show the next actions needed before closeout')
     .argument('<contractId>')
     .action(async (contractId: string) => {
-      await audited(
+      await auditedInLedger(
         {
           cwd,
           actor,
@@ -452,7 +558,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           scopeId: contractId,
         },
         () => {
-          emit(JSON.stringify(usingLedger(cwd, (ledger) => getNextActionReport(ledger, contractId)), null, 2));
+          emit(JSON.stringify(usingLedger(ledgerTarget(), (ledger) => getNextActionReport(ledger, contractId)), null, 2));
         },
       );
     });
@@ -462,7 +568,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .description('Show audit events for a contract or workspace')
     .argument('[contractId]')
     .action(async (contractId: string | undefined) => {
-      await audited(
+      await auditedInLedger(
         {
           cwd,
           actor,
@@ -472,7 +578,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           scopeId: contractId,
         },
         () => {
-          emit(JSON.stringify(usingLedger(cwd, (ledger) => listAuditLog(ledger, contractId)), null, 2));
+          emit(JSON.stringify(usingLedger(ledgerTarget(), (ledger) => listAuditLog(ledger, contractId)), null, 2));
         },
       );
     });
@@ -490,7 +596,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
         options: { requires: string },
         command: Command,
       ) => {
-        await audited(
+        await auditedInLedger(
           {
             cwd,
             actor,
@@ -500,7 +606,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
             scopeId: contractId,
           },
           () => {
-            const criterion = usingLedger(cwd, (ledger) =>
+            const criterion = usingLedger(ledgerTarget(), (ledger) =>
               addCriterion(ledger, {
                 contractId,
                 statement,
@@ -531,7 +637,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
         },
         command: Command,
       ) => {
-        await audited(
+        await auditedInLedger(
           {
             cwd,
             actor,
@@ -541,7 +647,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
             scopeId: criterionId,
           },
           () => {
-            const criterion = usingLedger(cwd, (ledger) =>
+            const criterion = usingLedger(ledgerTarget(), (ledger) =>
               updateCriterionStatus(ledger, {
                 id: criterionId,
                 status: parseCriterionStatus(options.status),
@@ -562,7 +668,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .argument('<contractId>')
     .argument('<title>')
     .action(async (contractId: string, title: string, _options: unknown, command: Command) => {
-      await audited(
+      await auditedInLedger(
         {
           cwd,
           actor,
@@ -572,7 +678,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           scopeId: contractId,
         },
         () => {
-          const todo = usingLedger(cwd, (ledger) => addTodo(ledger, { contractId, title, actor }));
+          const todo = usingLedger(ledgerTarget(), (ledger) => addTodo(ledger, { contractId, title, actor }));
           emit(todo.id);
         },
       );
@@ -593,7 +699,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
         command: Command,
       ) => {
         const argv = getInvocationArgv(deps, program);
-        await audited(
+        await auditedInLedger(
           {
             cwd,
             actor,
@@ -612,7 +718,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
             if (commandArgs === undefined || commandArgs.length === 0) {
               throw new Error('verifier-add-command requires a command');
             }
-            const verifier = usingLedger(cwd, (ledger) =>
+            const verifier = usingLedger(ledgerTarget(), (ledger) =>
               addVerifier(ledger, {
                 contractId,
                 name,
@@ -670,7 +776,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           requiresJudgment?: boolean;
         },
       ) => {
-        await audited(
+        await auditedInLedger(
           {
             cwd,
             actor,
@@ -679,7 +785,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
             scopeType: 'adapter',
           },
           () => {
-            const adapter = usingLedger(cwd, (ledger) =>
+            const adapter = usingLedger(ledgerTarget(), (ledger) =>
               registerAdapter(ledger, {
                 name,
                 version: options.adapterVersion,
@@ -727,7 +833,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           optional?: boolean;
         },
       ) => {
-        await audited(
+        await auditedInLedger(
           {
             cwd,
             actor,
@@ -737,7 +843,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
             scopeId: contractId,
           },
           () => {
-            const verifier = usingLedger(cwd, (ledger) => {
+            const verifier = usingLedger(ledgerTarget(), (ledger) => {
               const adapter = getAdapterByNameOrId(ledger, adapterNameOrId);
               if (adapter === undefined) {
                 throw new Error(`Adapter not found: ${adapterNameOrId}`);
@@ -764,7 +870,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .command('adapter-list')
     .description('List verifier adapters')
     .action(async (_options: unknown, command: Command) => {
-      await audited(
+      await auditedInLedger(
         {
           cwd,
           actor,
@@ -773,7 +879,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           scopeType: 'adapter',
         },
         () => {
-          emit(JSON.stringify(usingLedger(cwd, listAdapters), null, 2));
+          emit(JSON.stringify(usingLedger(ledgerTarget(), listAdapters), null, 2));
         },
       );
     });
@@ -782,7 +888,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .command('profile-list')
     .description('List acceptance profiles')
     .action(async (_options: unknown, command: Command) => {
-      await audited(
+      await auditedInLedger(
         {
           cwd,
           actor,
@@ -791,7 +897,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           scopeType: 'profile',
         },
         () => {
-          emit(JSON.stringify(usingLedger(cwd, listProfiles), null, 2));
+          emit(JSON.stringify(usingLedger(ledgerTarget(), listProfiles), null, 2));
         },
       );
     });
@@ -810,7 +916,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
         options: { why: string; check: string },
         command: Command,
       ) => {
-        await audited(
+        await auditedInLedger(
           {
             cwd,
             actor,
@@ -820,7 +926,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
             scopeId: contractId,
           },
           () => {
-            const item = usingLedger(cwd, (ledger) =>
+            const item = usingLedger(ledgerTarget(), (ledger) =>
               addFailureMode(ledger, {
                 contractId,
                 failureMode,
@@ -843,7 +949,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .description('List failure modes for a contract')
     .argument('<contractId>')
     .action(async (contractId: string, _options: unknown, command: Command) => {
-      await audited(
+      await auditedInLedger(
         {
           cwd,
           actor,
@@ -853,7 +959,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           scopeId: contractId,
         },
         () => {
-          emit(JSON.stringify(usingLedger(cwd, (ledger) => listFailureModes(ledger, contractId)), null, 2));
+          emit(JSON.stringify(usingLedger(ledgerTarget(), (ledger) => listFailureModes(ledger, contractId)), null, 2));
         },
       );
     });
@@ -869,7 +975,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
         options: { status: string },
         command: Command,
       ) => {
-        await audited(
+        await auditedInLedger(
           {
             cwd,
             actor,
@@ -879,7 +985,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
             scopeId: failureModeId,
           },
           () => {
-            usingLedger(cwd, (ledger) =>
+            usingLedger(ledgerTarget(), (ledger) =>
               resolveFailureMode(ledger, {
                 id: failureModeId,
                 status: parseFailureModeStatus(options.status),
@@ -911,7 +1017,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
         },
         command: Command,
       ) => {
-        await audited(
+        await auditedInLedger(
           {
             cwd,
             actor,
@@ -921,7 +1027,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
             scopeId: contractId,
           },
           () => {
-            const receipt = usingLedger(cwd, (ledger) =>
+            const receipt = usingLedger(ledgerTarget(), (ledger) =>
               addReceipt(ledger, {
                 contractId,
                 criterionId: options.criterion,
@@ -952,7 +1058,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
       options: { criterion?: string; verifier?: string },
     ) => {
       const argv = getInvocationArgv(deps, program);
-      await audited(
+      await auditedInLedger(
         {
           cwd,
           actor,
@@ -968,7 +1074,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
             throw new Error('receipt-run requires a command');
           }
 
-          const receipt = await usingLedgerAsync(cwd, (ledger) =>
+          const receipt = await usingLedgerAsync(ledgerTarget(), (ledger) =>
             runCommandReceipt(ledger, {
               contractId,
               criterionId: options.criterion,
@@ -988,7 +1094,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .description('Attempt contract closeout')
     .argument('<contractId>')
     .action(async (contractId: string, _options: unknown, command: Command) => {
-      await audited(
+      await auditedInLedger(
         {
           cwd,
           actor,
@@ -998,7 +1104,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           scopeId: contractId,
         },
         () => {
-          const result = usingLedger(cwd, (ledger) => closeContract(ledger, { contractId, actor }));
+          const result = usingLedger(ledgerTarget(), (ledger) => closeContract(ledger, { contractId, actor }));
           if (!result.ok) {
             const message = `blocked: ${result.problems.join('; ')}`;
             emit(message);
@@ -1015,7 +1121,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .description('Export a contract as Markdown')
     .argument('<contractId>')
     .action(async (contractId: string, _options: unknown, command: Command) => {
-      await audited(
+      await auditedInLedger(
         {
           cwd,
           actor,
@@ -1025,7 +1131,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           scopeId: contractId,
         },
         () => {
-          const markdown = usingLedger(cwd, (ledger) => {
+          const markdown = usingLedger(ledgerTarget(), (ledger) => {
             const exported = exportContractMarkdown(ledger, contractId);
             recordEvent(ledger, {
               contractId,
@@ -1046,7 +1152,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
     .command('audit-weak-closeouts')
     .description('Report closed contracts with weak evidence')
     .action(async (_options: unknown, command: Command) => {
-      await audited(
+      await auditedInLedger(
         {
           cwd,
           actor,
@@ -1055,7 +1161,7 @@ export function createProgram(deps: ProgramDeps = {}): Command {
           scopeType: 'audit',
         },
         () => {
-          const report = usingLedger(cwd, (ledger) => {
+          const report = usingLedger(ledgerTarget(), (ledger) => {
             const generated = weakCloseoutReport(ledger);
             recordEvent(ledger, {
               scopeType: 'audit',

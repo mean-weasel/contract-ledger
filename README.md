@@ -137,6 +137,31 @@ The ledger is stored at `.contracts/ledger.sqlite` in the current working
 directory. Generated artifacts and exports also live under `.contracts/`, which
 is ignored by git by default.
 
+For cross-repo dogfooding, keep the npm package installed globally and point the
+CLI at one global ledger:
+
+```bash
+npm install --global @mean-weasel/contract-ledger
+contract --global-ledger ledger-info
+contract --global-ledger init "Shared audit demo" --intent "Use one ledger across repos"
+```
+
+`--global-ledger` stores SQLite and generated artifacts under
+`~/.contract-ledger/`. The command still records and uses the current working
+directory as the repo path, so receipts run from the repo where the agent is
+standing. To make global storage the default for a shell or agent session, set:
+
+```bash
+export CONTRACT_LEDGER_SCOPE=global
+```
+
+For tests or custom storage, use an explicit SQLite path:
+
+```bash
+export CONTRACT_LEDGER_PATH=/tmp/contract-ledger/ledger.sqlite
+contract ledger-info
+```
+
 ## Package And Release
 
 Package readiness checks:

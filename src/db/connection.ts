@@ -1,8 +1,9 @@
 import { mkdirSync } from 'node:fs';
+import path from 'node:path';
 
 import Database from 'better-sqlite3';
 
-import { getWorkspacePaths } from '../core/fs.js';
+import { getWorkspacePaths, type WorkspacePaths } from '../core/fs.js';
 import { systemClock, type Clock } from '../core/time.js';
 import {
   migrateAdapterManifestReferences,
@@ -20,12 +21,13 @@ export type Ledger = {
 
 export type OpenLedgerInput = {
   cwd: string;
+  paths?: WorkspacePaths;
   clock?: Clock;
 };
 
 export function openLedger(input: OpenLedgerInput): Ledger {
   const clock = input.clock ?? systemClock;
-  const paths = getWorkspacePaths(input.cwd);
+  const paths = input.paths ?? getWorkspacePaths(input.cwd);
 
   mkdirSync(paths.contractsDir, { recursive: true });
   mkdirSync(paths.artifactsDir, { recursive: true });
@@ -40,7 +42,7 @@ export function openLedger(input: OpenLedgerInput): Ledger {
 
   return {
     db,
-    cwd: paths.root,
+    cwd: path.resolve(input.cwd),
     ledgerPath: paths.ledgerPath,
     close: () => db.close(),
   };

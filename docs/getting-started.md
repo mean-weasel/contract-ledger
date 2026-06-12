@@ -45,6 +45,37 @@ contract init "Fix billing settings regression" --intent "Canceled users cannot 
 contract accept ctr_xxx
 ```
 
+## Ledger Location
+
+By default, Contract Ledger is repo-local: running `contract` from a project
+uses that project's `.contracts/ledger.sqlite`.
+
+Use a global ledger when you want one audit surface across several repos:
+
+```bash
+contract --global-ledger ledger-info
+contract --global-ledger init "Cross-repo task" --intent "Track the task in one global ledger"
+```
+
+Global mode stores data under `~/.contract-ledger/ledger.sqlite`, with artifacts
+and exports beside it. It does not change the working directory used for
+contracts or command receipts; those still point at the repo where the command
+was run.
+
+To default a shell or agent session to the global ledger:
+
+```bash
+export CONTRACT_LEDGER_SCOPE=global
+contract ledger-info
+```
+
+For test runs or custom storage, point directly at a SQLite file:
+
+```bash
+export CONTRACT_LEDGER_PATH=/tmp/contract-ledger/ledger.sqlite
+contract ledger-info
+```
+
 `contract init` prints a contract id such as `ctr_xxx`. Use that id in the
 remaining commands. `contract accept` moves the contract out of draft state so
 criteria, verifiers, receipts, and closeout gates can describe real work.

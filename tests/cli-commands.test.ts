@@ -1,10 +1,11 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { createProgram } from '../src/cli.js';
+import { getExplicitLedgerPaths, getGlobalLedgerPaths } from '../src/core/fs.js';
 import { openLedger, type Ledger } from '../src/db/connection.js';
 
 async function withTempWorkspace<T>(fn: (root: string) => T | Promise<T>): Promise<T> {
@@ -21,6 +22,8 @@ async function runCli(input: {
   cwd: string;
   argv: string[];
   actor?: string;
+  env?: NodeJS.ProcessEnv;
+  homeDir?: string;
   stdout?: string[];
   stderr?: string[];
 }): Promise<void> {
@@ -29,6 +32,8 @@ async function runCli(input: {
   const fullArgv = ['node', 'contract', ...input.argv];
   const program = createProgram({
     cwd: input.cwd,
+    env: input.env,
+    homeDir: input.homeDir,
     actor: input.actor ?? 'test-agent',
     argv: fullArgv,
     stdout: (line) => stdout.push(line),
@@ -48,7 +53,133 @@ function withLedger<T>(cwd: string, fn: (ledger: Ledger) => T): T {
   }
 }
 
+function withGlobalLedger<T>(cwd: string, homeDir: string, fn: (ledger: Ledger) => T): T {
+  const ledger = openLedger({ cwd, paths: getGlobalLedgerPaths(homeDir) });
+
+  try {
+    return fn(ledger);
+  } finally {
+    ledger.close();
+  }
+}
+
+function withExplicitLedger<T>(cwd: string, ledgerPath: string, fn: (ledger: Ledger) => T): T {
+  const ledger = openLedger({ cwd, paths: getExplicitLedgerPaths(ledgerPath) });
+
+  try {
+    return fn(ledger);
+  } finally {
+    ledger.close();
+  }
+}
+
 describe('CLI commands', () => {
+  it('ledger-info reports the default workspace ledger path', async () => {
+    await withTempWorkspace(async (root) => {
+      const stdout: string[] = [];
+
+      await runCli({
+        cwd: root,
+        argv: ['ledger-info'],
+        stdout,
+      });
+
+      const info = JSON.parse(stdout.join('\n')) as {
+        mode: string;
+        cwd: string;
+        ledgerPath: string;
+      };
+
+      expect(info).toMatchObject({
+        mode: 'workspace',
+        cwd: root,
+        ledgerPath: path.join(root, '.contracts', 'ledger.sqlite'),
+      });
+    });
+  });
+
+  it('global ledger mode shares one ledger across working directories without changing repo cwd', async () => {
+    await withTempWorkspace(async (root) => {
+      const homeDir = path.join(root, 'home');
+      const repoA = path.join(root, 'repo-a');
+      const repoB = path.join(root, 'repo-b');
+      await mkdir(homeDir);
+      await mkdir(repoA);
+      await mkdir(repoB);
+
+      const initStdout: string[] = [];
+      await runCli({
+        cwd: repoA,
+        homeDir,
+        argv: [
+          '--global-ledger',
+          'init',
+          'Global demo',
+          '--intent',
+          'Share contract state across repos',
+        ],
+        stdout: initStdout,
+      });
+
+      const contractId = initStdout.join('\n').trim();
+      const statusStdout: string[] = [];
+      await runCli({
+        cwd: repoB,
+        homeDir,
+        argv: ['--global-ledger', 'status'],
+        stdout: statusStdout,
+      });
+
+      expect(statusStdout.join('\n')).toContain(contractId);
+      withGlobalLedger(repoB, homeDir, (ledger) => {
+        expect(ledger.ledgerPath).toBe(path.join(homeDir, '.contract-ledger', 'ledger.sqlite'));
+        const contract = ledger.db
+          .prepare('select repo_path from contracts where id = ?')
+          .get(contractId) as { repo_path: string };
+        const invocationCwds = ledger.db
+          .prepare('select subcommand, cwd from command_invocations order by started_at, rowid')
+          .all() as Array<{ subcommand: string; cwd: string }>;
+
+        expect(contract.repo_path).toBe(repoA);
+        expect(invocationCwds).toEqual([
+          { subcommand: 'init', cwd: repoA },
+          { subcommand: 'status', cwd: repoB },
+        ]);
+      });
+    });
+  });
+
+  it('CONTRACT_LEDGER_PATH selects an explicit shared sqlite file', async () => {
+    await withTempWorkspace(async (root) => {
+      const repoA = path.join(root, 'repo-a');
+      const repoB = path.join(root, 'repo-b');
+      const ledgerPath = path.join(root, 'shared', 'ledger.sqlite');
+      await mkdir(repoA);
+      await mkdir(repoB);
+
+      const stdout: string[] = [];
+      await runCli({
+        cwd: repoA,
+        env: { CONTRACT_LEDGER_PATH: ledgerPath },
+        argv: ['init', 'Explicit ledger', '--intent', 'Use a caller-selected ledger path'],
+        stdout,
+      });
+      const contractId = stdout.join('\n').trim();
+
+      withExplicitLedger(repoB, ledgerPath, (ledger) => {
+        expect(ledger.ledgerPath).toBe(ledgerPath);
+        const contract = ledger.db
+          .prepare('select title, repo_path from contracts where id = ?')
+          .get(contractId) as { title: string; repo_path: string };
+
+        expect(contract).toEqual({
+          title: 'Explicit ledger',
+          repo_path: repoA,
+        });
+      });
+    });
+  });
+
   it('init creates a contract and records command invocation audit', async () => {
     await withTempWorkspace(async (root) => {
       const stdout: string[] = [];
